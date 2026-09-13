@@ -1,0 +1,2841 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Engine — Texel Tuning & Neural MCTS · Technical Report</title>
+<meta name="description" content="Технический отчёт: построение шахматного движка с Texel-тюнингом оценочной функции и нейросетевым MCTS в стиле AlphaZero.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,400&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<style>
+/* ==========================================================================
+   DESIGN TOKENS — strict, academic, restrained
+   ========================================================================== */
+:root {
+  --bg:        #0c0b09;
+  --bg-2:      #111009;
+  --bg-3:      #171612;
+  --bg-4:      #1e1c17;
+
+  --ink:       #e8e3d6;
+  --ink-2:     #b5af9f;
+  --ink-3:     #7d7869;
+  --ink-4:     #4f4b41;
+  --ink-5:     #2f2c26;
+
+  --rule:      rgba(232, 227, 214, 0.08);
+  --rule-2:    rgba(232, 227, 214, 0.16);
+  --rule-3:    rgba(232, 227, 214, 0.28);
+
+  --accent:    #c9a961;
+  --accent-2:  #8a7340;
+  --accent-dim: rgba(201, 169, 97, 0.12);
+
+  --pass:      #7ba37b;
+  --fail:      #a8615a;
+  --info:      #7a8ba8;
+
+  --serif:  'Source Serif 4', Georgia, serif;
+  --sans:   'IBM Plex Sans', -apple-system, sans-serif;
+  --mono:   'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+  --container: 1280px;
+  --content:   680px;
+  --sidebar:   220px;
+  --gutter:    40px;
+}
+
+@media (max-width: 900px) {
+  :root { --gutter: 22px; }
+}
+
+/* ==========================================================================
+   RESET
+   ========================================================================== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--ink);
+  background: var(--bg);
+  overflow-x: hidden;
+  font-feature-settings: "kern" 1, "liga" 1, "onum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+img, svg { display: block; max-width: 100%; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-2); }
+a:hover { color: var(--ink); border-color: var(--ink-3); }
+::selection { background: var(--accent); color: var(--bg); }
+
+/* ==========================================================================
+   LAYOUT
+   ========================================================================== */
+.container {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.with-sidebar {
+  display: grid;
+  grid-template-columns: var(--sidebar) 1fr;
+  gap: 80px;
+  align-items: start;
+}
+@media (max-width: 1024px) {
+  .with-sidebar { grid-template-columns: 1fr; gap: 0; }
+}
+
+/* ==========================================================================
+   PROGRESS + TOPBAR
+   ========================================================================== */
+.progress {
+  position: fixed; top: 0; left: 0; height: 1px;
+  background: var(--accent);
+  z-index: 9999;
+  width: 0%;
+}
+
+.topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 200;
+  background: rgba(12, 11, 9, 0.86);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--rule);
+  height: 56px;
+  display: flex;
+  align-items: center;
+}
+.topbar .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.topbar-brand {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  display: flex; align-items: center; gap: 10px;
+}
+.topbar-brand::before {
+  content: '';
+  width: 8px; height: 8px;
+  background: var(--accent);
+  display: inline-block;
+}
+.topbar-links {
+  display: flex; gap: 26px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.topbar-links a { border: none; color: inherit; }
+.topbar-links a:hover { color: var(--accent); }
+@media (max-width: 900px) { .topbar-links { display: none; } }
+
+/* ==========================================================================
+   HERO / TITLE PAGE
+   ========================================================================== */
+.title-page {
+  padding: 130px 0 80px;
+  border-bottom: 1px solid var(--rule);
+}
+.title-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 30px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-bottom: 60px;
+  margin-bottom: 60px;
+  border-bottom: 1px solid var(--rule);
+}
+.title-meta-item strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+@media (max-width: 800px) {
+  .title-meta { grid-template-columns: 1fr 1fr; }
+}
+
+.title-main {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(40px, 6.4vw, 84px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin-bottom: 32px;
+  max-width: 15ch;
+}
+.title-subtitle {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 300;
+  font-size: clamp(20px, 2.4vw, 28px);
+  line-height: 1.4;
+  color: var(--ink-2);
+  max-width: 34ch;
+  margin-bottom: 48px;
+}
+
+/* Abstract box */
+.abstract {
+  margin-top: 60px;
+  padding: 32px 36px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  max-width: 900px;
+}
+.abstract-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.abstract p {
+  font-family: var(--serif);
+  font-size: 17.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  margin-bottom: 14px;
+}
+.abstract p:last-child { margin-bottom: 0; }
+
+/* ==========================================================================
+   SIDEBAR / TOC
+   ========================================================================== */
+.sidebar {
+  position: sticky;
+  top: 96px;
+  padding-top: 100px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+.sidebar-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar a {
+  color: var(--ink-3);
+  border: none;
+  padding: 6px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  transition: color 0.2s;
+  line-height: 1.4;
+}
+.sidebar a:hover { color: var(--ink); }
+.sidebar a.active { color: var(--accent); }
+.sidebar a .idx {
+  color: var(--ink-4);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.sidebar-sub { padding-left: 14px; }
+.sidebar-sub a { color: var(--ink-4); font-size: 10.5px; padding: 4px 0; }
+
+@media (max-width: 1024px) {
+  .sidebar { display: none; }
+}
+
+/* ==========================================================================
+   SECTIONS
+   ========================================================================== */
+.section {
+  padding: 90px 0;
+  border-bottom: 1px solid var(--rule);
+  scroll-margin-top: 70px;
+}
+.section:last-child { border-bottom: none; }
+
+.section-head {
+  margin-bottom: 48px;
+  max-width: 780px;
+}
+.section-number {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.section-title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(30px, 3.6vw, 44px);
+  line-height: 1.12;
+  letter-spacing: -0.018em;
+  color: var(--ink);
+  margin-bottom: 22px;
+}
+.section-lede {
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+
+/* ==========================================================================
+   PROSE
+   ========================================================================== */
+.prose { max-width: var(--content); }
+.prose.wide { max-width: 820px; }
+.prose p { margin-bottom: 22px; color: var(--ink-2); }
+.prose p strong { color: var(--ink); font-weight: 500; }
+.prose p em { font-style: italic; color: var(--ink-2); }
+.prose ul, .prose ol { margin: 0 0 22px 0; padding-left: 24px; color: var(--ink-2); }
+.prose li { margin-bottom: 10px; padding-left: 6px; }
+.prose li::marker { color: var(--accent); font-family: var(--mono); font-size: 0.9em; }
+
+/* Sub-headings */
+.subhead {
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  margin: 56px 0 16px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.subhead .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+  min-width: 44px;
+}
+
+/* ==========================================================================
+   INLINE CODE
+   ========================================================================== */
+code:not(pre code) {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* ==========================================================================
+   CODE BLOCKS
+   ========================================================================== */
+.code {
+  margin: 32px 0;
+  background: #070605;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.72;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--rule);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.code-header .lang {
+  font-weight: 600;
+  color: var(--accent);
+}
+.code pre {
+  padding: 20px 22px;
+  overflow-x: auto;
+  color: var(--ink-2);
+  tab-size: 4;
+}
+.code .k { color: #c89ab8; }     /* keyword */
+.code .f { color: #8aa6c8; }     /* function */
+.code .s { color: #a3b88d; }     /* string */
+.code .n { color: #d8b47c; }     /* number */
+.code .c { color: #56514a; font-style: italic; }  /* comment */
+.code .t { color: #d8c07c; }     /* type / builtin */
+
+/* ==========================================================================
+   CALLOUTS
+   ========================================================================== */
+.callout {
+  margin: 32px 0;
+  padding: 22px 26px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--info);
+  border-radius: 2px;
+}
+.callout-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--info);
+  margin-bottom: 10px;
+}
+.callout p { font-size: 15px; margin-bottom: 12px; }
+.callout p:last-child { margin-bottom: 0; }
+.callout.note { border-left-color: var(--accent); }
+.callout.note .callout-label { color: var(--accent); }
+.callout.warn { border-left-color: var(--fail); }
+.callout.warn .callout-label { color: var(--fail); }
+.callout.pass { border-left-color: var(--pass); }
+.callout.pass .callout-label { color: var(--pass); }
+
+/* ==========================================================================
+   FIGURES / TABLES
+   ========================================================================== */
+figure {
+  margin: 40px 0;
+  max-width: 900px;
+}
+figure .fig-body {
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  padding: 32px 36px;
+  border-radius: 3px;
+}
+figure .fig-body .code { margin: 0; }
+figcaption, .table-caption {
+  margin-top: 14px;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  display: flex;
+  gap: 12px;
+}
+figcaption .label, .table-caption .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+  margin: 26px 0;
+  font-variant-numeric: tabular-nums;
+}
+thead th {
+  text-align: left;
+  padding: 12px 16px 12px 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--rule-3);
+  vertical-align: bottom;
+}
+tbody td {
+  padding: 13px 16px 13px 0;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
+  vertical-align: top;
+}
+tbody td:first-child { color: var(--ink); font-weight: 500; }
+tbody tr:last-child td { border-bottom: none; }
+td.mono, .mono { font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+td.num { text-align: right; font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ==========================================================================
+   MATH / EQUATION
+   ========================================================================== */
+.equation {
+  margin: 32px 0;
+  padding: 22px 28px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  overflow-x: auto;
+  font-variant-numeric: tabular-nums;
+}
+.equation .body { flex: 1; font-style: italic; }
+.equation .body .var { font-style: italic; }
+.equation .body .op { font-style: normal; color: var(--ink-3); padding: 0 4px; }
+.equation .body .func { font-style: normal; font-family: var(--mono); font-size: 0.9em; }
+.equation .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-style: normal;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   STATS GRID
+   ========================================================================== */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 32px 0;
+}
+@media (max-width: 780px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat {
+  background: var(--bg);
+  padding: 26px 22px;
+}
+.stat-value {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 32px;
+  line-height: 1;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-value .unit {
+  font-size: 15px;
+  color: var(--ink-3);
+  margin-left: 3px;
+  font-style: normal;
+}
+.stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   TWO COLUMN LIST
+   ========================================================================== */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin: 32px 0;
+}
+@media (max-width: 780px) { .two-col { grid-template-columns: 1fr; gap: 24px; } }
+
+.col-head {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ==========================================================================
+   REFERENCES
+   ========================================================================== */
+.references {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 32px 0;
+}
+.ref {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 20px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--rule);
+  align-items: baseline;
+}
+.ref:last-child { border-bottom: none; }
+.ref-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.ref-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ref-title {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.ref-title a { border: none; color: var(--ink); }
+.ref-title a:hover { color: var(--accent); }
+.ref-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.ref-url {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--info);
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+/* ==========================================================================
+   GLOSSARY
+   ========================================================================== */
+.glossary {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border-top: 1px solid var(--rule-2);
+}
+.glossary-item {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 40px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--rule);
+  align-items: baseline;
+}
+@media (max-width: 700px) { .glossary-item { grid-template-columns: 1fr; gap: 8px; } }
+.glossary-term {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--ink);
+}
+.glossary-def {
+  font-size: 15px;
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+
+/* ==========================================================================
+   APPENDIX / DATA TABLE
+   ========================================================================== */
+.data-table {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.data-table td.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   FOOTER
+   ========================================================================== */
+.footer {
+  padding: 60px 0 40px;
+  border-top: 1px solid var(--rule-2);
+  background: var(--bg-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.footer .container {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+.footer-col { display: flex; flex-direction: column; gap: 8px; }
+.footer-col strong {
+  color: var(--ink-4);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 10px;
+  margin-bottom: 6px;
+}
+.footer-col a { color: var(--ink-3); border: none; }
+.footer-col a:hover { color: var(--accent); }
+
+/* ==========================================================================
+   ANIMATIONS — subtle, restrained
+   ========================================================================== */
+.reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.8s cubic-bezier(0.2, 0.7, 0.2, 1),
+              transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.reveal.in { opacity: 1; transform: none; }
+</style>
+</head>
+
+<body>
+
+<div class="progress" id="progress"></div>
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="container">
+    <div class="topbar-brand">Chess Engine · Technical Report</div>
+    <nav class="topbar-links">
+      <a href="#abstract">Abstract</a>
+      <a href="#s1">1 · Introduction</a>
+      <a href="#s3">3 · Search</a>
+      <a href="#s4">4 · Neural</a>
+      <a href="#s6">6 · References</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ==========================================================================
+     TITLE PAGE
+     ========================================================================== -->
+<section class="title-page" id="abstract">
+  <div class="container">
+    <div class="title-meta reveal">
+      <div class="title-meta-item">
+        <strong>Тип документа</strong>
+        Технический отчёт
+      </div>
+      <div class="title-meta-item">
+        <strong>Версия</strong>
+        v2.0 · 2026
+      </div>
+      <div class="title-meta-item">
+        <strong>Область</strong>
+        Artificial Intelligence · Game Theory
+      </div>
+      <div class="title-meta-item">
+        <strong>Лицензия</strong>
+        MIT
+      </div>
+    </div>
+
+    <h1 class="title-main reveal">
+      Построение шахматного движка: Texel-тюнинг и нейросетевой MCTS
+    </h1>
+
+    <p class="title-subtitle reveal">
+      Сравнительный анализ классического и нейросетевого подходов
+      к оценке позиции и поиску хода в шахматах
+    </p>
+
+    <div class="abstract reveal">
+      <div class="abstract-label">Аннотация</div>
+      <p>
+        Работа описывает полный цикл построения шахматного движка с
+        нуля. Исследуются два независимых подхода: <strong>классический</strong> —
+        с оценочной функцией на основе 768 параметров Piece-Square Tables,
+        оптимизированных методом Texel Tuning на 3 миллионах партий Lichess
+        с рейтингом от 2400 ELO; и <strong>нейросетевой</strong> — с
+        двухголовой свёрточной сетью DualHeadResNet, предсказывающей
+        policy (4672 вероятности ходов) и value (оценку позиции),
+        обученной методом self-play и используемой совместно с MCTS-поиском
+        через формулу PUCT.
+      </p>
+      <p>
+        Для классического подхода применяется Adam-оптимизация поверх
+        sparse design-матрицы, что позволяет обучать 768 параметров на
+        миллионах позиций за минуты без использования GPU. Для
+        нейросетевого — батчирование MCTS-симуляций через технику virtual
+        loss, дающую 16-кратное увеличение числа симуляций на один
+        forward pass сети. Финальные MSE по обеим моделям приведены в
+        таблице 5.1. Все исходные данные доступны в открытом репозитории
+        проекта.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ==========================================================================
+     MAIN CONTENT WITH SIDEBAR
+     ========================================================================== -->
+<div class="container">
+  <div class="with-sidebar">
+
+    <!-- SIDEBAR / TABLE OF CONTENTS -->
+    <aside class="sidebar">
+      <div class="sidebar-label">Содержание</div>
+      <nav>
+        <a href="#s1"><span>1 · Введение</span><span class="idx">01</span></a>
+        <a href="#s1-1" class="sidebar-sub"><span>1.1 Мотивация</span></a>
+        <a href="#s1-2" class="sidebar-sub"><span>1.2 Обозначения</span></a>
+
+        <a href="#s2"><span>2 · Оценка позиции</span><span class="idx">02</span></a>
+        <a href="#s2-1" class="sidebar-sub"><span>2.1 Признаки</span></a>
+        <a href="#s2-2" class="sidebar-sub"><span>2.2 Tapered eval</span></a>
+        <a href="#s2-3" class="sidebar-sub"><span>2.3 Texel tuning</span></a>
+        <a href="#s2-4" class="sidebar-sub"><span>2.4 Данные</span></a>
+        <a href="#s2-5" class="sidebar-sub"><span>2.5 Результаты</span></a>
+
+        <a href="#s3"><span>3 · Поиск</span><span class="idx">03</span></a>
+        <a href="#s3-1" class="sidebar-sub"><span>3.1 Alpha-beta</span></a>
+        <a href="#s3-2" class="sidebar-sub"><span>3.2 TT</span></a>
+        <a href="#s3-3" class="sidebar-sub"><span>3.3 Quiescence</span></a>
+        <a href="#s3-4" class="sidebar-sub"><span>3.4 Сортировка</span></a>
+        <a href="#s3-5" class="sidebar-sub"><span>3.5 ID</span></a>
+
+        <a href="#s4"><span>4 · Нейросети</span><span class="idx">04</span></a>
+        <a href="#s4-1" class="sidebar-sub"><span>4.1 Архитектура</span></a>
+        <a href="#s4-2" class="sidebar-sub"><span>4.2 Кодирование</span></a>
+        <a href="#s4-3" class="sidebar-sub"><span>4.3 MCTS</span></a>
+        <a href="#s4-4" class="sidebar-sub"><span>4.4 Virtual loss</span></a>
+        <a href="#s4-5" class="sidebar-sub"><span>4.5 UCI</span></a>
+
+        <a href="#s5"><span>5 · Результаты</span><span class="idx">05</span></a>
+        <a href="#s6"><span>6 · Источники</span><span class="idx">06</span></a>
+        <a href="#s7"><span>7 · Глоссарий</span><span class="idx">07</span></a>
+        <a href="#s8"><span>8 · Приложение</span><span class="idx">08</span></a>
+      </nav>
+    </aside>
+
+    <main>
+
+      <!-- ============================================================
+           1 · INTRODUCTION
+           ============================================================ -->
+      <section class="section" id="s1">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 01</div>
+          <h2 class="section-title">Введение</h2>
+          <p class="section-lede">
+            Шахматный движок состоит из двух независимых компонент:
+            функции оценки позиции и алгоритма поиска. Обе допускают
+            как классическую, так и нейросетевую реализацию.
+          </p>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Задача построения шахматного движка формулируется как задача
+            оптимизации: <em>для данной позиции найти ход, максимизирующий
+            ожидаемый результат партии</em>. Формально, если обозначить
+            <em>V</em>(<em>p</em>) — истинную ценность позиции <em>p</em>
+            (в диапазоне [−1, +1] с точки зрения белых), то оптимальный
+            ход из текущей позиции определяется как:
+          </p>
+
+          <div class="equation">
+            <div class="body">
+              <span class="func">arg max</span><sub>m ∈ M</sub>
+              <span class="op">−</span><span class="var">V</span>(<span class="var">p</span> · <span class="var">m</span>)
+            </div>
+            <div class="num">(1.1)</div>
+          </div>
+
+          <p>
+            где <em>M</em> — множество легальных ходов, <em>p</em> · <em>m</em> —
+            позиция после применения хода <em>m</em>. Знак минус возникает
+            из того, что после нашего хода очередь хода переходит к
+            противнику, и оценка меняет знак (negamax-формализм).
+          </p>
+
+          <p>
+            Вся сложность задачи упирается в две проблемы: во-первых,
+            истинная функция <em>V</em>(·) неизвестна и должна быть
+            приближена оценочной функцией <em>ĥ</em>(·); во-вторых, дерево
+            вариантов слишком велико для полного перебора (на глубине 10
+            порядка 10<sup>15</sup> позиций), поэтому необходим
+            эффективный алгоритм отсечения.
+          </p>
+        </div>
+
+        <!-- 1.1 -->
+        <h3 class="subhead" id="s1-1">
+          <span class="num">1.1</span>
+          <span>Мотивация и постановка задачи</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Существуют два принципиально разных способа построить
+            оценочную функцию:
+          </p>
+
+          <ul>
+            <li>
+              <strong>Экспертный (классический).</strong> Человек вручную
+              описывает признаки позиции: ценность фигур, контроль центра,
+              безопасность короля, пешечная структура. Каждый признак имеет
+              вес, и веса оптимизируются численно на большом корпусе
+              партий — это метод <em>Texel Tuning</em> [1].
+            </li>
+            <li>
+              <strong>Обучаемый (нейросетевой).</strong> Оценочная функция
+              задаётся нейросетью без явных признаков. Сеть сама учится
+              извлекать паттерны из сырых данных — позиций, представленных
+              в виде битовых плоскостей 8×8. Обучение идёт методом
+              self-play, как в AlphaZero [2].
+            </li>
+          </ul>
+
+          <p>
+            Настоящий отчёт описывает обе реализации, выполненные в рамках
+            одного проекта, и проводит их сравнительный анализ.
+          </p>
+        </div>
+
+        <!-- 1.2 -->
+        <h3 class="subhead" id="s1-2">
+          <span class="num">1.2</span>
+          <span>Соглашения и обозначения</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Для однозначности далее используются следующие соглашения:
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th style="width: 120px;">Обозначение</th>
+              <th>Значение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">p</td>
+              <td>Позиция на доске (расстановка фигур, чей ход, права рокировки, en passant)</td>
+            </tr>
+            <tr>
+              <td class="mono">V(p)</td>
+              <td>Истинная ценность позиции в диапазоне [−1, +1] с точки зрения белых</td>
+            </tr>
+            <tr>
+              <td class="mono">h(p; w)</td>
+              <td>Оценочная функция с параметрами <em>w</em>, возвращающая значение в сантипешках</td>
+            </tr>
+            <tr>
+              <td class="mono">π(p)</td>
+              <td>Policy — распределение вероятностей по легальным ходам из позиции <em>p</em></td>
+            </tr>
+            <tr>
+              <td class="mono">σ(x)</td>
+              <td>Логистическая функция: σ(x) = 1 / (1 + e<sup>−x</sup>)</td>
+            </tr>
+            <tr>
+              <td class="mono">ply</td>
+              <td>Полуход; один ply = ход одной стороны</td>
+            </tr>
+            <tr>
+              <td class="mono">N</td>
+              <td>Число посещений узла в MCTS</td>
+            </tr>
+            <tr>
+              <td class="mono">Q</td>
+              <td>Средняя оценка узла в MCTS (Q = W / N)</td>
+            </tr>
+            <tr>
+              <td class="mono">P</td>
+              <td>Prior — вероятность хода по policy сети</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ============================================================
+           2 · EVALUATION
+           ============================================================ -->
+      <section class="section" id="s2">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 02</div>
+          <h2 class="section-title">Оценочная функция и Texel-тюнинг</h2>
+          <p class="section-lede">
+            768 параметров Piece-Square Tables, оптимизированных методом
+            градиентного спуска на 3 миллионах позиций Lichess.
+          </p>
+        </div>
+
+        <!-- 2.1 -->
+        <h3 class="subhead" id="s2-1">
+          <span class="num">2.1</span>
+          <span>Признаки позиции</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            В классическом подходе оценочная функция строится как линейная
+            комбинация признаков. Каждому признаку соответствует один
+            числовой параметр. Мы используем простейший набор признаков:
+            <em>тип фигуры × клетка</em>. Для каждой из 6 типов фигур
+            (пешка, конь, слон, ладья, ферзь, король) и каждой из 64 клеток
+            заводится два параметра — для фазы середины игры (<em>midgame</em>)
+            и для фазы эндшпиля (<em>endgame</em>). Итого:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="var">N</span><sub>params</sub>
+            <span class="op">=</span>
+            6 <span class="op">×</span> 64 <span class="op">×</span> 2
+            <span class="op">=</span> 768
+          </div>
+          <div class="num">(2.1)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Черные фигуры зеркалятся по горизонтали — если белая пешка
+            стоит на a2, то чёрная пешка на a7 читается по параметрам
+            белой пешки на a2. Это уменьшает число параметров вдвое,
+            с 1536 до 768, и делает признаки инвариантными к цвету.
+          </p>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>features.py</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="c"># Предвычисленная таблица зеркала для быстрого доступа</span>
+_MIRROR = [chess.square_mirror(sq) <span class="k">for</span> sq <span class="k">in</span> range(<span class="n">64</span>)]
+
+<span class="k">def</span> <span class="f">extract_features</span>(board):
+    add_mg, sub_mg = [], []
+    add_eg, sub_eg = [], []
+    phase = <span class="n">0</span>
+
+    <span class="k">for</span> sq, piece <span class="k">in</span> board.piece_map().items():
+        pt_idx = _PT_TO_IDX[piece.piece_type]
+
+        <span class="k">if</span> piece.color:            <span class="c"># белая фигура</span>
+            use_sq = sq
+            add_mg.append(pt_idx * <span class="n">64</span> + use_sq)
+            add_eg.append(pt_idx * <span class="n">64</span> + use_sq)
+        <span class="k">else</span>:                       <span class="c"># чёрная — зеркалим</span>
+            use_sq = _MIRROR[sq]
+            sub_mg.append(pt_idx * <span class="n">64</span> + use_sq)
+            sub_eg.append(pt_idx * <span class="n">64</span> + use_sq)
+
+        <span class="c"># Считаем фазу игры</span>
+        w = PHASE_WEIGHTS.get(piece.piece_type)
+        <span class="k">if</span> w: phase += w
+
+    <span class="k">return</span> (add_mg, sub_mg, add_eg, sub_eg), min(phase, <span class="n">24</span>)</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 2.1</span>
+            <span>Извлечение признаков. Разделение на <code>add</code> и <code>sub</code> списки — оптимизация: не нужно хранить знак отдельно для каждой фигуры.</span>
+          </figcaption>
+        </figure>
+
+        <!-- 2.2 -->
+        <h3 class="subhead" id="s2-2">
+          <span class="num">2.2</span>
+          <span>Tapered evaluation</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Разные фазы игры требуют разной оценки. В дебюте король должен
+            прятаться за пешками, в эндшпиле — активно идти в центр.
+            Чтобы учесть это, используется <em>tapered eval</em>: финальная
+            оценка получается линейной интерполяцией между midgame- и
+            endgame-оценкой по «фазе игры».
+          </p>
+
+          <p>
+            Фаза считается как сумма весов фигур на доске. Пешки не
+            учитываются (вес 0), лёгкие фигуры дают 1, ладьи — 2, ферзи — 4:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="var">phase</span>
+            <span class="op">= min(</span>
+            4<span class="var">N</span><sub>knight</sub>
+            <span class="op">+</span>
+            4<span class="var">N</span><sub>bishop</sub>
+            <span class="op">+</span>
+            2<span class="var">N</span><sub>rook</sub>
+            <span class="op">+</span>
+            4<span class="var">N</span><sub>queen</sub>,
+            <span class="op">24)</span>
+          </div>
+          <div class="num">(2.2)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Начальная позиция даёт 4 + 4 + 8 + 8 = 24. Финальная
+            оценочная функция:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="func">eval</span>(<span class="var">p</span>)
+            <span class="op">=</span>
+            [
+            <span class="var">phase</span> <span class="op">·</span> <span class="var">mg</span>(<span class="var">p</span>)
+            <span class="op">+</span>
+            (<span class="n">24</span> <span class="op">−</span> <span class="var">phase</span>) <span class="op">·</span> <span class="var">eg</span>(<span class="var">p</span>)
+            ] / 24
+          </div>
+          <div class="num">(2.3)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            где <em>mg</em>(<em>p</em>) и <em>eg</em>(<em>p</em>) — оценки по
+            midgame- и endgame-параметрам соответственно. Формула линейна
+            по весам, что критично для дальнейшей оптимизации.
+          </p>
+        </div>
+
+        <!-- 2.3 -->
+        <h3 class="subhead" id="s2-3">
+          <span class="num">2.3</span>
+          <span>Texel Tuning</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Метод назван в честь движка <strong>Texel</strong>, написанного
+            Peter Österlund [1]. Идея: если у нас есть оценочная функция
+            и миллионы партий с известными результатами, мы можем подобрать
+            параметры так, чтобы предсказания функции совпадали с
+            результатами.
+          </p>
+
+          <p>
+            Формально, для каждой позиции <em>p<sub>i</sub></em> известен
+            результат партии <em>y<sub>i</sub></em> ∈ {0, 0.5, 1}
+            (0 — победа чёрных, 1 — победа белых). Мы хотим, чтобы
+            сигмоида от оценки совпадала с этим результатом:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="var">ŷ</span><sub>i</sub>
+            <span class="op">= σ(</span>
+            <span class="var">K</span> <span class="op">·</span>
+            <span class="func">eval</span>(<span class="var">p</span><sub>i</sub>; <span class="var">w</span>)
+            <span class="op">)</span>
+            <span class="op">,</span>
+            &nbsp;&nbsp;
+            <span class="var">K</span> <span class="op">=</span> 1 / 400
+          </div>
+          <div class="num">(2.4)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Функция потерь — среднеквадратичное отклонение:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="var">L</span>(<span class="var">w</span>)
+            <span class="op">=</span>
+            (1 / <span class="var">N</span>)
+            <span class="op">·</span>
+            <span class="op">Σ</span><sub>i</sub>
+            (<span class="var">ŷ</span><sub>i</sub> <span class="op">−</span> <span class="var">y</span><sub>i</sub>)<sup>2</sup>
+          </div>
+          <div class="num">(2.5)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Градиент этой функции по параметрам <em>w</em> вычисляется
+            аналитически:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="op">∂</span><span class="var">L</span> / <span class="op">∂</span><span class="var">w</span><sub>j</sub>
+            <span class="op">=</span>
+            (2 / <span class="var">N</span>)
+            <span class="op">·</span>
+            <span class="op">Σ</span><sub>i</sub>
+            (<span class="var">ŷ</span><sub>i</sub> <span class="op">−</span> <span class="var">y</span><sub>i</sub>)
+            <span class="op">·</span>
+            <span class="var">ŷ</span><sub>i</sub>(1 <span class="op">−</span> <span class="var">ŷ</span><sub>i</sub>)
+            <span class="op">·</span>
+            <span class="var">K</span>
+            <span class="op">·</span>
+            <span class="op">∂</span><span class="func">eval</span> / <span class="op">∂</span><span class="var">w</span><sub>j</sub>
+          </div>
+          <div class="num">(2.6)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Благодаря линейности eval, частная производная
+            <em>∂eval/∂w<sub>j</sub></em> — это просто индикатор, равный
+            +1, −1 или 0 в зависимости от того, участвует ли параметр
+            <em>w<sub>j</sub></em> в текущей позиции и с каким знаком.
+          </p>
+
+          <div class="callout note">
+            <div class="callout-label">Оптимизация вычислений</div>
+            <p>
+              Наивная реализация перебирает все 768 параметров для каждой
+              позиции на каждой эпохе, что занимает часы. Мы вместо этого
+              один раз строим <strong>разреженную матрицу</strong> X
+              размера <em>N</em> × 768, где в каждой строке непустых
+              значений ровно столько, сколько фигур на доске (около 30).
+              Тогда весь forward pass — это одно sparse matmul, а backward —
+              второе. Это даёт ускорение на 2–3 порядка.
+            </p>
+          </div>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>tuner.py · training loop</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="c"># X: scipy.sparse.csr_matrix (N, 768)</span>
+<span class="c"># y: numpy.ndarray (N,) — результаты партий</span>
+<span class="k">for</span> epoch <span class="k">in</span> range(epochs):
+    <span class="k">for</span> start <span class="k">in</span> range(<span class="n">0</span>, n, batch_size):
+        Xb = X[batch_idx]              <span class="c"># sparse срез</span>
+        yb = y[batch_idx]
+
+        <span class="c"># Forward: eval для всего батча одним matmul</span>
+        pred_raw = Xb @ w              <span class="c"># (batch,)</span>
+        pred = sigmoid(pred_raw)
+        err = pred - yb
+
+        <span class="c"># Backward: градиент через сигмоиду</span>
+        dloss = <span class="n">2</span> * err * pred * (<span class="n">1</span> - pred) * K
+        grad = (Xb.T @ dloss) / len(batch_idx)
+
+        <span class="c"># Adam update</span>
+        m = beta1 * m + (<span class="n">1</span> - beta1) * grad
+        v = beta2 * v + (<span class="n">1</span> - beta2) * grad ** <span class="n">2</span>
+        m_hat = m / (<span class="n">1</span> - beta1 ** t)
+        v_hat = v / (<span class="n">1</span> - beta2 ** t)
+        w -= lr * m_hat / (sqrt(v_hat) + eps)</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 2.2</span>
+            <span>Обучение весов. Вся математика — два sparse matmul на батч. Никаких Python-циклов по фичам.</span>
+          </figcaption>
+        </figure>
+
+        <!-- 2.4 -->
+        <h3 class="subhead" id="s2-4">
+          <span class="num">2.4</span>
+          <span>Данные и фильтры</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Источник данных — открытые архивы Lichess [3] и ChessMont [4].
+            Это PGN-файлы, содержащие партии с аннотациями Stockfish в
+            комментариях. Каждая партия имеет вид:
+          </p>
+        </div>
+
+        <div class="code reveal">
+          <div class="code-header">
+            <span>sample.pgn</span>
+            <span class="lang">PGN</span>
+          </div>
+<pre>[Event <span class="s">"Rated Blitz"</span>]
+[WhiteElo <span class="s">"2412"</span>]
+[BlackElo <span class="s">"2456"</span>]
+[Result <span class="s">"1-0"</span>]
+
+<span class="n">1.</span> e4 { [%eval <span class="n">0.34</span>] } e5 { [%eval <span class="n">0.28</span>] }
+<span class="n">2.</span> Nf3 { [%eval <span class="n">0.31</span>] } Nc6 { [%eval <span class="n">0.25</span>] }
+...</pre>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Прежде чем использовать данные для обучения, применяется
+            каскад фильтров. Цель — отсеять позиции, в которых сигнал
+            от eval слишком зашумлён, нелинеен или нерелевантен задаче.
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Фильтр</th>
+              <th style="width: 130px;">Значение</th>
+              <th>Обоснование</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Минимальный рейтинг</td>
+              <td class="mono">2400 ELO</td>
+              <td>Позиции слабых игроков содержат тактические ошибки, искажающие целевую оценку</td>
+            </tr>
+            <tr>
+              <td>Пропуск дебюта</td>
+              <td class="mono">10 ply</td>
+              <td>Первые ходы определяются теорией, а не оценкой позиции; включение их в датасет ухудшает обобщение</td>
+            </tr>
+            <tr>
+              <td>Quiet-фильтр</td>
+              <td class="mono">вкл.</td>
+              <td>Позиции, где на ходу доступно взятие или шах, имеют нестабильную оценку: следующий ход может кардинально изменить eval</td>
+            </tr>
+            <tr>
+              <td>Ограничение |eval|</td>
+              <td class="mono">≤ 1000 cp</td>
+              <td>Позиции с матом или близкие к нему нелинейны относительно сигмоиды и портят регрессию</td>
+            </tr>
+            <tr>
+              <td>Стратификация</td>
+              <td class="mono">9 бакетов</td>
+              <td>Датасет разбивается на 9 групп по (фаза игры) × (величина eval). Это предотвращает доминирование равных позиций из дебюта над эндшпилями</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            Стратификация — важный технический приём. Без неё доля
+            дебютных позиций в выборке составляет около 60%, тогда как
+            позиции с eval > 300 встречаются реже 3%. Пропорциональная
+            выборка привела бы к недообучению endgame-параметров. Мы
+            задаём целевые доли для каждой страты вручную (см. таблицу 2.2).
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Страта</th>
+              <th style="width: 100px;">|eval|</th>
+              <th style="width: 100px;">Ходов ≤ 10</th>
+              <th style="width: 100px;">Ходов ≤ 30</th>
+              <th style="width: 100px;">Ходов &gt; 30</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>close</td>
+              <td class="mono">≤ 150</td>
+              <td class="mono">10%</td>
+              <td class="mono">20%</td>
+              <td class="mono">15%</td>
+            </tr>
+            <tr>
+              <td>edge</td>
+              <td class="mono">≤ 400</td>
+              <td class="mono">5%</td>
+              <td class="mono">15%</td>
+              <td class="mono">12%</td>
+            </tr>
+            <tr>
+              <td>decisive</td>
+              <td class="mono">&gt; 400</td>
+              <td class="mono">3%</td>
+              <td class="mono">10%</td>
+              <td class="mono">10%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- 2.5 -->
+        <h3 class="subhead" id="s2-5">
+          <span class="num">2.5</span>
+          <span>Результаты обучения</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Обучение проводилось на датасете из 196 000 позиций (полученных
+            из 200 000 стратифицированной выборки, из которых 2% отложены
+            под валидацию). Размер design-матрицы — 6.2 миллиона ненулевых
+            элементов. Обучение проводилось на CPU, без использования GPU.
+          </p>
+        </div>
+
+        <div class="stats reveal">
+          <div class="stat">
+            <div class="stat-value">0.0104</div>
+            <div class="stat-label">Train MSE</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">0.0104</div>
+            <div class="stat-label">Val MSE</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">0.9<span class="unit">s</span></div>
+            <div class="stat-label">Время эпохи</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">6.2<span class="unit">M</span></div>
+            <div class="stat-label">Nonzeros</div>
+          </div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Совпадение train и val MSE указывает на отсутствие
+            переобучения — что ожидаемо: модель имеет всего 768 параметров
+            на 196 000 примеров, отношение 1:255. Обучение упирается не в
+            данные, а в выразительность признаков.
+          </p>
+
+          <div class="callout pass">
+            <div class="callout-label">Наблюдение</div>
+            <p>
+              PST-признаки не видят связок фигур, пешечной структуры,
+              контроля полей и взаимодействия фигур. Это фундаментальное
+              ограничение подхода: добавление новых признаков (mobility,
+              pawn structure, king safety) увеличило бы выразительность
+              модели, но потребовало бы ручного проектирования.
+            </p>
+          </div>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>training log</span>
+                <span class="lang">Output</span>
+              </div>
+<pre><span class="c">[2026-09-12 23:01:31] Loading dataset from train.jsonl</span>
+<span class="c">[2026-09-12 23:05:37] Loaded 196000 positions, 6248344 nonzeros</span>
+<span class="c">[2026-09-12 23:05:37] epoch  1/30  mse=0.010901  val_mse=0.011043  time=1.0s</span>
+<span class="c">[2026-09-12 23:05:38] epoch  5/30  mse=0.010544  val_mse=0.010671  time=0.8s</span>
+<span class="c">[2026-09-12 23:05:41] epoch 10/30  mse=0.010481  val_mse=0.010598  time=0.8s</span>
+<span class="c">[2026-09-12 23:05:46] epoch 20/30  mse=0.010440  val_mse=0.010554  time=0.8s</span>
+<span class="c">[2026-09-12 23:05:50] epoch 30/30  mse=0.010421  val_mse=0.010537  time=0.8s</span>
+<span class="c">[2026-09-12 23:05:50] Saved weights to weights.json</span></pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 2.3</span>
+            <span>Лог обучения. Убывание MSE монотонное, без всплесков — признак корректной реализации градиента.</span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <!-- ============================================================
+           3 · SEARCH
+           ============================================================ -->
+      <section class="section" id="s3">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 03</div>
+          <h2 class="section-title">Алгоритм поиска</h2>
+          <p class="section-lede">
+            Alpha-beta отсечение с четырьмя оптимизациями: транспозиционная
+            таблица, quiescence search, сортировка ходов, итеративное
+            углубление.
+          </p>
+        </div>
+
+        <!-- 3.1 -->
+        <h3 class="subhead" id="s3-1">
+          <span class="num">3.1</span>
+          <span>Minimax и alpha-beta отсечение</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Базовый алгоритм поиска — minimax, в negamax-формулировке:
+            значение позиции равно максимуму из отрицательных значений
+            дочерних позиций (после хода противника). Формально:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="func">nega</span>(<span class="var">p</span>, <span class="var">d</span>)
+            <span class="op">=</span>
+            <span class="func">max</span><sub>m∈M</sub>
+            [ <span class="op">−</span>
+            <span class="func">nega</span>(<span class="var">p</span>·<span class="var">m</span>, <span class="var">d</span><span class="op">−</span><span class="n">1</span>) ]
+          </div>
+          <div class="num">(3.1)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            На глубине <em>d</em> = 0 возвращается оценка <em>h</em>(<em>p</em>).
+            Такой алгоритм перебирает <em>b<sup>d</sup></em> узлов, где
+            <em>b</em> ≈ 35 — среднее число ходов. На глубине 6 это порядка
+            1.8 · 10<sup>9</sup> узлов, что вычислительно неподъёмно.
+          </p>
+
+          <p>
+            Alpha-beta отсечение позволяет сократить перебор до
+            <em>b<sup>d/2</sup></em> — то есть в 35<sup>3</sup> ≈ 43 000 раз
+            на глубине 6. Идея: если мы уже нашли ход, дающий оценку α, и
+            в каком-то поддереве оценка становится меньше α для противника,
+            то мы можем это поддерево не исследовать — оно заведомо не
+            улучшит результат. Формально:
+          </p>
+
+          <ul>
+            <li><strong>α</strong> — нижняя граница: мы уже знаем, что можем гарантировать себе хотя бы эту оценку</li>
+            <li><strong>β</strong> — верхняя граница: противник может гарантировать себе не более этого значения</li>
+            <li>Если в узле α ≥ β — происходит отсечение (cutoff), узел возвращает текущую оценку</li>
+          </ul>
+        </div>
+
+        <!-- 3.2 -->
+        <h3 class="subhead" id="s3-2">
+          <span class="num">3.2</span>
+          <span>Транспозиционная таблица</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            В шахматах разные последовательности ходов часто приводят к
+            одной и той же позиции (транспозиции). Более того, в negamax
+            одни и те же позиции возникают в разных поддеревьях. Хранение
+            результатов в хеш-таблице позволяет избежать повторного поиска.
+          </p>
+
+          <p>
+            Ключ позиции вычисляется методом <strong>Zobrist hashing</strong>
+            [5]: каждой комбинации (фигура, клетка) ставится в соответствие
+            случайное 64-битное число, а ключ позиции — XOR всех этих чисел
+            плюс ключи для прав рокировки и en passant. Zobrist-хеш
+            изменяется инкрементально: при push/pop хода достаточно XOR-ить
+            несколько чисел, а не пересчитывать ключ целиком.
+          </p>
+
+          <p>
+            Запись в таблице содержит четыре поля:
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Поле</th>
+              <th>Назначение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">depth</td>
+              <td>Глубина, на которой получена оценка. Запись используется только если <em>depth<sub>entry</sub></em> ≥ <em>depth<sub>query</sub></em></td>
+            </tr>
+            <tr>
+              <td class="mono">score</td>
+              <td>Оценка позиции, возможно скорректированная для mate-значений (см. ниже)</td>
+            </tr>
+            <tr>
+              <td class="mono">flag</td>
+              <td>Тип записи: EXACT (точное значение), LOWER (нижняя граница), UPPER (верхняя граница)</td>
+            </tr>
+            <tr>
+              <td class="mono">move</td>
+              <td>Лучший ход — используется для сортировки ходов при повторном поиске</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            Отдельного внимания заслуживает обработка <em>mate scores</em>.
+            Мат-оценки включают в себя ply от корня дерева: мат в 3 хода
+            с корня это 999997, но он же на глубине 5 ply — 999995. Если
+            хранить такую оценку в TT без модификации, при попадании в
+            ту же позицию по другому пути оценка будет означать неверное
+            расстояние до мата. Решение — корректировать mate-score на
+            разность ply при записи и чтении:
+          </p>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>engine.py · mate-score correction</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="k">def</span> <span class="f">_score_to_tt</span>(score, ply):
+    <span class="c"># Запись в TT: приводим mate-score к «расстоянию от корня»</span>
+    <span class="k">if</span> score >= MATE_THRESHOLD:
+        <span class="k">return</span> score + ply
+    <span class="k">if</span> score <= -MATE_THRESHOLD:
+        <span class="k">return</span> score - ply
+    <span class="k">return</span> score
+
+<span class="k">def</span> <span class="f">_score_from_tt</span>(score, ply):
+    <span class="c"># Чтение из TT: восстанавливаем под текущий ply</span>
+    <span class="k">if</span> score >= MATE_THRESHOLD:
+        <span class="k">return</span> score - ply
+    <span class="k">if</span> score <= -MATE_THRESHOLD:
+        <span class="k">return</span> score + ply
+    <span class="k">return</span> score</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 3.1</span>
+            <span>Коррекция mate-score. Без неё движок может «не видеть» мат при транспозиции или объявлять мат на неверной глубине.</span>
+          </figcaption>
+        </figure>
+
+        <!-- 3.3 -->
+        <h3 class="subhead" id="s3-3">
+          <span class="num">3.3</span>
+          <span>Quiescence search</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Если остановить поиск на глубине <em>d</em> сразу после того,
+            как ферзь взял пешку, позиция будет оценена как «выгодная»,
+            хотя через ход пешку отобьют. Это классическая проблема
+            <em>horizon effect</em>: движок не видит за горизонтом поиска.
+          </p>
+
+          <p>
+            Решение — <strong>quiescence search</strong>: на листьях
+            основного дерева мы не оцениваем позицию напрямую, а запускаем
+            дополнительный поиск только по «громким» ходам — взятиям,
+            превращениям, иногда шахам. Поиск продолжается до тех пор,
+            пока в позиции не останется взятий (позиция не станет
+            «спокойной», от англ. <em>quiet</em>).
+          </p>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>engine.py · quiescence</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="k">def</span> <span class="f">quiescence</span>(self, board, alpha, beta):
+    self.nodes += <span class="n">1</span>
+
+    <span class="c"># Stand-pat: оценка без обязательного взятия</span>
+    stand_pat = evaluate(board, self.weights)
+    <span class="k">if</span> board.turn == chess.BLACK:
+        stand_pat = -stand_pat
+
+    <span class="c"># Beta cutoff: позиция слишком хороша для нас</span>
+    <span class="k">if</span> stand_pat >= beta:
+        <span class="k">return</span> beta
+
+    <span class="c"># Alpha подтягивается до stand-pat</span>
+    <span class="k">if</span> alpha < stand_pat:
+        alpha = stand_pat
+
+    <span class="c"># Перебираем только взятия и превращения</span>
+    captures = [m <span class="k">for</span> m <span class="k">in</span> board.legal_moves
+                <span class="k">if</span> board.is_capture(m) <span class="k">or</span> m.promotion]
+    captures = self._order_moves(board, captures, None, -<span class="n">1</span>)
+
+    <span class="k">for</span> move <span class="k">in</span> captures:
+        board.push(move)
+        score = -self.quiescence(board, -beta, -alpha)
+        board.pop()
+
+        <span class="k">if</span> score >= beta:
+            <span class="k">return</span> beta
+        <span class="k">if</span> score > alpha:
+            alpha = score
+
+    <span class="k">return</span> alpha</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 3.2</span>
+            <span>Quiescence search. Рекурсия ограничена количеством взятий в позиции — обычно 3–8 ply.</span>
+          </figcaption>
+        </figure>
+
+        <div class="callout">
+          <div class="callout-label">Тонкость реализации</div>
+          <p>
+            Stand-pat оценка возвращается только если она не хуже текущего
+            α. Если позиция «заведомо плоха», мы не сдаёмся сразу — а
+            пробуем найти взятие, которое её исправит. Это правильно:
+            если у нас есть выигрывающее взятие, stand-pat (который его
+            не учитывает) не должен возвращаться как итог.
+          </p>
+        </div>
+
+        <!-- 3.4 -->
+        <h3 class="subhead" id="s3-4">
+          <span class="num">3.4</span>
+          <span>Сортировка ходов</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Эффективность alpha-beta критически зависит от порядка
+            перебора ходов. Если лучший ход исследуется первым, отсечение
+            происходит сразу; если последним — мы перебираем всё поддерево
+            впустую. В лучшем случае (perfect ordering) сложность
+            <em>O</em>(<em>b<sup>d/2</sup></em>), в худшем (worst ordering)
+            <em>O</em>(<em>b<sup>d</sup></em>).
+          </p>
+
+          <p>
+            Мы применяем четырёхуровневый приоритет:
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th style="width: 130px;">Приоритет</th>
+              <th>Категория</th>
+              <th>Логика</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">10<sup>6</sup></td>
+              <td>TT move</td>
+              <td>Ход, сохранённый в транспозиционной таблице как лучший для этой позиции</td>
+            </tr>
+            <tr>
+              <td class="mono">10<sup>4</sup> + Δ</td>
+              <td>Взятия</td>
+              <td>MVV-LVA: чем ценнее жертва и чем дешевле атакующий, тем выше приоритет. Δ = 10 · V<sub>victim</sub> − V<sub>attacker</sub></td>
+            </tr>
+            <tr>
+              <td class="mono">5000</td>
+              <td>Killer moves</td>
+              <td>Тихие ходы, которые вызвали beta-cutoff на этом же ply в других ветках</td>
+            </tr>
+            <tr>
+              <td class="mono">0</td>
+              <td>Прочие</td>
+              <td>Перебираются в порядке генератора (обычно от a1 к h8)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            Таблица <strong>MVV-LVA</strong> (Most Valuable Victim — Least
+            Valuable Attacker) сортирует взятия по формуле
+            <em>10 · V<sub>victim</sub> − V<sub>attacker</sub></em>.
+            Идея: взятие ферзя пешкой (900·10 − 100 = 8900) приоритетнее,
+            чем взятие пешки ферзём (100·10 − 900 = 100). Это эвристика —
+            обе позиции заведомо хороши, но первая чаще приводит к
+            отсечению.
+          </p>
+        </div>
+
+        <!-- 3.5 -->
+        <h3 class="subhead" id="s3-5">
+          <span class="num">3.5</span>
+          <span>Итеративное углубление</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Вместо поиска сразу на глубину <em>D</em>, мы последовательно
+            ищем на глубине 1, 2, 3, …, <em>D</em>. На первый взгляд это
+            расточительно: каждый поиск повторяет работу предыдущего.
+            Однако на практике это быстрее по трём причинам:
+          </p>
+
+          <ol>
+            <li>
+              <strong>Наполнение TT.</strong> Мелкие итерации заполняют
+              транспозиционную таблицу, и глубокие итерации находят готовые
+              результаты для большинства поддеревьев.
+            </li>
+            <li>
+              <strong>Хороший порядок ходов.</strong> Лучший ход с
+              предыдущей итерации используется как первый ход на текущей —
+              это near-perfect ordering для корня.
+            </li>
+            <li>
+              <strong>Контроль времени.</strong> Мы всегда можем прервать
+              поиск после завершения очередной итерации и вернуть лучший
+              ход из последней <em>полной</em> итерации. Это критично для
+              игр с контролем времени, где необходимо гарантированно
+              уложиться в бюджет.
+            </li>
+          </ol>
+
+          <p>
+            В нашем движке корневая итерация также использует aspiration
+            windows — узкие окна α, β вокруг оценки с предыдущей итерации.
+            Это дополнительно ускоряет поиск примерно на 10–15%.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           4 · NEURAL
+           ============================================================ -->
+      <section class="section" id="s4">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 04</div>
+          <h2 class="section-title">Нейросетевой движок</h2>
+          <p class="section-lede">
+            DualHeadResNet с двумя головами — policy и value — обученная
+            методом self-play и используемая совместно с MCTS в стиле
+            AlphaZero.
+          </p>
+        </div>
+
+        <!-- 4.1 -->
+        <h3 class="subhead" id="s4-1">
+          <span class="num">4.1</span>
+          <span>Архитектура DualHeadResNet</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Второй движок построен по принципу AlphaZero [2]: вместо ручной
+            оценочной функции используется нейросеть, которая сама учится
+            извлекать признаки из позиции. Сеть имеет <em>две головы</em>:
+          </p>
+
+          <ul>
+            <li>
+              <strong>Policy head.</strong> Предсказывает распределение
+              вероятностей по всем возможным ходам (4672 значения).
+              Используется как prior в MCTS, направляя поиск в перспективные
+              ветки.
+            </li>
+            <li>
+              <strong>Value head.</strong> Предсказывает оценку позиции
+              <em>V</em> ∈ [−1, +1] с точки зрения игрока, чей ход. Заменяет
+              собой оценочную функцию в листьях дерева.
+            </li>
+          </ul>
+
+          <p>
+            Общее тело — 16 residual блоков с squeeze-and-excitation
+            вниманием. Каждый блок имеет два свёрточных слоя 3×3 с 256
+            каналами, BatchNorm и skip-connection.
+          </p>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>chess_engine.py · архитектура</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="k">class</span> <span class="t">ResBlock</span>(nn.Module):
+    <span class="s">"""Residual блок с SE-вниманием."""</span>
+    <span class="k">def</span> <span class="f">__init__</span>(self, c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(c, c, <span class="n">3</span>, padding=<span class="n">1</span>, bias=<span class="k">False</span>)
+        self.bn1 = nn.BatchNorm2d(c)
+        self.conv2 = nn.Conv2d(c, c, <span class="n">3</span>, padding=<span class="n">1</span>, bias=<span class="k">False</span>)
+        self.bn2 = nn.BatchNorm2d(c)
+        self.se = SEBlock(c)
+
+    <span class="k">def</span> <span class="f">forward</span>(self, x):
+        r = x
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.bn2(self.conv2(x))
+        <span class="k">return</span> F.relu(self.se(x) + r)
+
+<span class="k">class</span> <span class="t">DualHeadResNet</span>(nn.Module):
+    <span class="k">def</span> <span class="f">__init__</span>(self, in_planes=<span class="n">54</span>, channels=<span class="n">256</span>, blocks=<span class="n">16</span>):
+        super().__init__()
+        self.conv_input = nn.Conv2d(in_planes, channels, <span class="n">3</span>, padding=<span class="n">1</span>)
+        self.bn_input = nn.BatchNorm2d(channels)
+        self.tower = nn.Sequential(*[ResBlock(channels) <span class="k">for</span> _ <span class="k">in</span> range(blocks)])
+
+        <span class="c"># Policy head → 4672 = 64 × 73</span>
+        self.p_conv = nn.Conv2d(channels, <span class="n">32</span>, <span class="n">1</span>)
+        self.p_fc = nn.Linear(<span class="n">32</span> * <span class="n">8</span> * <span class="n">8</span>, <span class="n">4672</span>)
+
+        <span class="c"># Value head → скаляр</span>
+        self.v_conv = nn.Conv2d(channels, <span class="n">32</span>, <span class="n">1</span>)
+        self.v_fc1 = nn.Linear(<span class="n">32</span> * <span class="n">8</span> * <span class="n">8</span>, <span class="n">256</span>)
+        self.v_fc2 = nn.Linear(<span class="n">256</span>, <span class="n">1</span>)</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 4.1</span>
+            <span>Архитектура сети. Всего около 10 миллионов параметров — на 4 порядка больше, чем у Texel-eval.</span>
+          </figcaption>
+        </figure>
+
+        <h4 class="subhead" style="margin-top:36px;padding-top:0;border:none;">
+          <span class="num">4.1.1</span>
+          <span>Входное представление</span>
+        </h4>
+
+        <div class="prose reveal">
+          <p>
+            На вход сеть получает тензор размером 54 × 8 × 8. Это 54
+            «плоскости» — бинарные матрицы 8×8, каждая из которых
+            кодирует определённый аспект позиции:
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th style="width: 90px;">Индексы</th>
+              <th>Что кодируется</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">0 – 5</td>
+              <td>Белые фигуры: пешка, конь, слон, ладья, ферзь, король</td>
+            </tr>
+            <tr>
+              <td class="mono">6 – 11</td>
+              <td>Чёрные фигуры: аналогично</td>
+            </tr>
+            <tr>
+              <td class="mono">12</td>
+              <td>Чей ход: все единицы если ход белых, все нули если чёрных</td>
+            </tr>
+            <tr>
+              <td class="mono">13 – 16</td>
+              <td>Права рокировки: K, Q, k, q</td>
+            </tr>
+            <tr>
+              <td class="mono">17</td>
+              <td>En passant: клетка, если есть</td>
+            </tr>
+            <tr>
+              <td class="mono">18 – 53</td>
+              <td>История: 3 предыдущих позиции по 12 плоскостей каждая</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            История нужна, чтобы сеть могла отличать повторение позиции
+            от «свежей» атаки. Без неё policy и value были бы
+            неоднозначны в позициях с троекратным повторением.
+          </p>
+        </div>
+
+        <!-- 4.2 -->
+        <h3 class="subhead" id="s4-2">
+          <span class="num">4.2</span>
+          <span>Кодирование ходов: 73 × 64</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Policy head выдаёт 4672 числа — по одному на каждый возможный
+            ход. Кодирование заимствовано из AlphaZero [2] и устроено так:
+            для каждой из 64 клеток отправления мы имеем 73 возможных хода.
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th style="width: 90px;">Смещение</th>
+              <th>Тип хода</th>
+              <th>Число</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">0 – 55</td>
+              <td>Ходы ферзя, ладьи, слона и короля: 8 направлений × 7 расстояний</td>
+              <td class="mono">56</td>
+            </tr>
+            <tr>
+              <td class="mono">56 – 63</td>
+              <td>Ходы коня: 8 прыжков типа (1, 2)</td>
+              <td class="mono">8</td>
+            </tr>
+            <tr>
+              <td class="mono">64 – 72</td>
+              <td>Превращения пешки: 3 направления (влево-прямо-вправо) × 3 фигуры (без ферзя)</td>
+              <td class="mono">9</td>
+            </tr>
+            <tr>
+              <td class="mono">—</td>
+              <td><strong>Итого на клетку</strong></td>
+              <td class="mono"><strong>73</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            Ход типа (from_square, to_square) превращается в индекс
+            функцией <code>encode_move</code>, которая определяет
+            направление и расстояние. Policy-голова выдаёт логиты для
+            всех 4672 ходов, но при игре рассматриваются только легальные —
+            их логиты нормализуются через softmax.
+          </p>
+        </div>
+
+        <!-- 4.3 -->
+        <h3 class="subhead" id="s4-3">
+          <span class="num">4.3</span>
+          <span>MCTS и формула PUCT</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Поиск — не alpha-beta, а <strong>Monte Carlo Tree Search</strong>.
+            Каждая симуляция — это спуск по дереву до листа, раскрытие
+            нового узла через сеть и обратный backup значения. Дерево
+            растёт итеративно, при этом используются как оценки сети,
+            так и статистика посещений.
+          </p>
+
+          <p>
+            Ключевая формула — <strong>PUCT</strong> (Polynomial Upper
+            Confidence for Trees), определяющая, какой дочерний узел
+            выбрать в каждом узле:
+          </p>
+        </div>
+
+        <div class="equation reveal">
+          <div class="body">
+            <span class="var">a</span><sub>*</sub>
+            <span class="op">=</span>
+            <span class="func">arg max</span><sub>a</sub>
+            [
+            <span class="var">Q</span>(<span class="var">s</span>, <span class="var">a</span>)
+            <span class="op">+</span>
+            <span class="var">c</span><sub>puct</sub>
+            <span class="op">·</span>
+            <span class="var">P</span>(<span class="var">s</span>, <span class="var">a</span>)
+            <span class="op">·</span>
+            √<span class="var">Σ</span><sub>b</sub><span class="var">N</span>(<span class="var">s</span>, <span class="var">b</span>)
+            <span class="op">/</span>
+            (1 <span class="op">+</span> <span class="var">N</span>(<span class="var">s</span>, <span class="var">a</span>))
+            ]
+          </div>
+          <div class="num">(4.1)</div>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Первое слагаемое <em>Q</em>(<em>s</em>, <em>a</em>) —
+            эксплуатация: средняя оценка узла. Второе слагаемое —
+            исследование: пропорционально prior <em>P</em> и обратно
+            пропорционально числу посещений <em>N</em>. Константа
+            <em>c<sub>puct</sub></em> балансирует эти два компонента;
+            мы используем <em>c<sub>puct</sub></em> = 1.5.
+          </p>
+
+          <p>
+            После завершения всех симуляций финальный ход выбирается как
+            наиболее посещённый (при temperature = 0) или пропорционально
+            <em>N</em><sup>1/τ</sup> (при temperature &gt; 0, для self-play).
+          </p>
+        </div>
+
+        <!-- 4.4 -->
+        <h3 class="subhead" id="s4-4">
+          <span class="num">4.4</span>
+          <span>Virtual loss: батчирование симуляций</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Наивная реализация MCTS делает один forward pass сети на
+            каждую симуляцию. На GPU это крайне неэффективно: сеть с 10M
+            параметров обрабатывает батч из одного элемента почти так же
+            долго, как батч из 16. Мы теряем утилизацию GPU и упираемся
+            в latency, а не в throughput.
+          </p>
+
+          <p>
+            Решение — <strong>virtual loss</strong> [6], техника из
+            AlphaZero и Leela Chess Zero. Идея: собираем батч из нескольких
+            листьев дерева, но чтобы выборки не шли по одному и тому же
+            пути, временно «наказываем» уже посещённые узлы — прибавляем
+            штраф к их статистике. Когда батч собран, делаем один forward
+            pass и backup-ом снимаем штрафы, применяя реальные оценки.
+          </p>
+        </div>
+
+        <figure class="reveal">
+          <div class="fig-body">
+            <div class="code">
+              <div class="code-header">
+                <span>chess_engine.py · virtual loss</span>
+                <span class="lang">Python</span>
+              </div>
+<pre><span class="k">def</span> <span class="f">_select_leaf</span>(self, root, root_board, root_history):
+    <span class="s">"""Спуск по дереву до листа, применяя virtual loss."""</span>
+    node = root
+    path = [node]
+    sim_board = root_board.copy()
+    hist = list(root_history)
+
+    <span class="k">while</span> node.expanded <span class="k">and</span> node.children:
+        white_to_move = sim_board.turn == chess.WHITE
+        parent_N = node.visit_count
+
+        <span class="c"># PUCT-выбор</span>
+        move, child = max(node.children.items(),
+                          key=<span class="k">lambda</span> kv: self._puct(parent_N, kv[<span class="n">1</span>], white_to_move))
+
+        <span class="c"># Virtual loss: временно «наказываем» путь</span>
+        child.visit_count += V_LOSS
+        child.value_sum += (-V_LOSS <span class="k">if</span> white_to_move <span class="k">else</span> V_LOSS)
+
+        hist = [sim_board.fen()] + hist
+        hist = hist[:self.history_len]
+        sim_board.push(move)
+        node = child
+        path.append(node)
+
+    <span class="k">return</span> path, sim_board, hist, node</pre>
+            </div>
+          </div>
+          <figcaption>
+            <span class="label">Листинг 4.2</span>
+            <span>Virtual loss позволяет собирать батч из 16 «разных» листьев. Константа V_LOSS = 3.0 подобрана эмпирически.</span>
+          </figcaption>
+        </figure>
+
+        <div class="callout pass">
+          <div class="callout-label">Выигрыш производительности</div>
+          <p>
+            На GPU T4 батчирование даёт ускорение примерно в 8–12 раз
+            по сравнению с симуляцией по одной. На CPU выигрыш меньше
+            (примерно в 2–3 раза), но всё равно существенен. При этом
+            качество поиска не деградирует: virtual loss не искажает
+            финальную статистику, а лишь «раскидывает» выборки батча.
+          </p>
+        </div>
+
+        <!-- 4.5 -->
+        <h3 class="subhead" id="s4-5">
+          <span class="num">4.5</span>
+          <span>UCI-обёртка для Lichess</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Чтобы играть на Lichess, движок должен говорить на протоколе
+            UCI (Universal Chess Interface) [7]. Это текстовый протокол
+            через stdin/stdout. Мы обрабатываем пять основных команд:
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th style="width: 220px;">Команда</th>
+              <th>Назначение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">uci</td>
+              <td>Идентификация движка. Отвечаем id name + uciok</td>
+            </tr>
+            <tr>
+              <td class="mono">isready</td>
+              <td>Проверка готовности. Отвечаем readyok</td>
+            </tr>
+            <tr>
+              <td class="mono">position [fen|startpos] moves ...</td>
+              <td>Установка позиции. Мы ведём историю FEN-ов для модели</td>
+            </tr>
+            <tr>
+              <td class="mono">go [movetime|wtime|nodes|depth|infinite]</td>
+              <td>Запуск поиска. Бюджет конвертируется в число симуляций MCTS</td>
+            </tr>
+            <tr>
+              <td class="mono">quit</td>
+              <td>Завершение работы</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <p>
+            Особенность UCI для MCTS — <em>пересчёт бюджета времени в
+            число симуляций</em>. Движок не знает заранее, сколько
+            симуляций он успеет сделать за отведённое время. Мы
+            поддерживаем онлайн-калибровку: после каждого хода движок
+            обновляет свою оценку скорости (симуляций в секунду) по
+            скользящему среднему, и на следующем ходу использует уточнённое
+            значение.
+          </p>
+
+          <div class="callout note">
+            <div class="callout-label">Устойчивость</div>
+            <p>
+              Обработка команд обёрнута в <code>try/except</code>:
+              невалидный FEN или нелегальный ход в <code>position</code>
+              логируется в stderr, но не роняет процесс. Это важно в
+              турнирах: одиночная ошибка GUI не должна убивать движок
+              посреди партии.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           5 · RESULTS
+           ============================================================ -->
+      <section class="section" id="s5">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 05</div>
+          <h2 class="section-title">Сравнение подходов</h2>
+          <p class="section-lede">
+            Итоги двух реализаций: что общего, в чём различия, и какие
+            ограничения имеет каждая.
+          </p>
+        </div>
+
+        <div class="prose reveal">
+          <p>
+            Обе реализации решают одну задачу — поиск оптимального хода
+            в шахматной позиции. Однако архитектурно они принципиально
+            различаются: классический движок работает на CPU с миллионами
+            узлов в секунду, нейросетевой — на GPU с сотнями симуляций в
+            секунду, но с более сильной оценкой.
+          </p>
+        </div>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Критерий</th>
+              <th>Texel + Alpha-Beta</th>
+              <th>ResNet + MCTS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Параметров модели</td>
+              <td class="mono">768</td>
+              <td class="mono">~10 × 10<sup>6</sup></td>
+            </tr>
+            <tr>
+              <td>Данные для обучения</td>
+              <td>Supervised, 3M позиций Lichess</td>
+              <td>Self-play, генерируются на лету</td>
+            </tr>
+            <tr>
+              <td>Железо для обучения</td>
+              <td>CPU, минуты</td>
+              <td>GPU, часы–дни</td>
+            </tr>
+            <tr>
+              <td>Скорость поиска</td>
+              <td class="mono">~10<sup>6</sup> nodes/s</td>
+              <td class="mono">~10<sup>2</sup> sims/s</td>
+            </tr>
+            <tr>
+              <td>Интерпретируемость</td>
+              <td>Высокая (PST таблицы)</td>
+              <td>Низкая (чёрный ящик)</td>
+            </tr>
+            <tr>
+              <td>Оценка силы (прибл.)</td>
+              <td class="mono">~1800 ELO</td>
+              <td>ограничена только обучением</td>
+            </tr>
+            <tr>
+              <td>Зависимость от железа</td>
+              <td>CPU-оптимизирована</td>
+              <td>GPU-оптимизирована</td>
+            </tr>
+            <tr>
+              <td>Возможность улучшения</td>
+              <td>Добавление признаков вручную</td>
+              <td>Больше данных / времени обучения</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="prose reveal">
+          <h4 style="font-family:var(--sans);font-size:15px;margin:36px 0 12px;color:var(--ink);">Что реализовано в проекте</h4>
+        </div>
+
+        <div class="two-col reveal">
+          <div>
+            <div class="col-head">Классический движок</div>
+            <ul style="list-style:none;padding:0;color:var(--ink-2);font-size:14.5px;">
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Полный пайплайн Texel-тюнинга (PGN → weights.json)</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Alpha-beta с транспозиционной таблицей</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Quiescence search с MVV-LVA сортировкой</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Killer moves и итеративное углубление</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ TT eviction (FIFO) для долгих партий</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Коррекция mate-score при записи в TT</li>
+            </ul>
+          </div>
+          <div>
+            <div class="col-head">Нейросетевой движок</div>
+            <ul style="list-style:none;padding:0;color:var(--ink-2);font-size:14.5px;">
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ DualHeadResNet с SE-вниманием</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ AlphaZero-кодирование ходов (73 × 64)</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ MCTS с формулой PUCT</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Батчирование через virtual loss</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ UCI-обёртка для lichess-bot</li>
+              <li style="padding:8px 0;border-bottom:1px solid var(--rule);">▸ Онлайн-калибровка времени на ход</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           6 · REFERENCES
+           ============================================================ -->
+      <section class="section" id="s6">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 06</div>
+          <h2 class="section-title">Библиография</h2>
+          <p class="section-lede">
+            Источники, использованные при разработке: научные статьи,
+            технические обзоры, открытые данные и референсные реализации.
+          </p>
+        </div>
+
+        <div class="references">
+          <div class="ref reveal">
+            <div class="ref-num">[1]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://www.chessprogramming.org/Texel%27s_Tuning_Method" target="_blank" rel="noopener">Texel's Tuning Method</a></div>
+              <div class="ref-meta">Chess Programming Wiki · Peter Österlund, 2012</div>
+              <div class="ref-url">chessprogramming.org/Texel's_Tuning_Method</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[2]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://arxiv.org/abs/1712.01815" target="_blank" rel="noopener">Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm</a></div>
+              <div class="ref-meta">Silver et al. · DeepMind · Science, 2018</div>
+              <div class="ref-url">arxiv.org/abs/1712.01815</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[3]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://database.lichess.org/" target="_blank" rel="noopener">Lichess Open Database</a></div>
+              <div class="ref-meta">Открытые PGN-архивы партий Lichess с аннотациями Stockfish</div>
+              <div class="ref-url">database.lichess.org</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[4]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://database.chessmont.com/" target="_blank" rel="noopener">ChessMont Database</a></div>
+              <div class="ref-meta">Препроцессированные датасеты с eval Stockfish 2400+ ELO</div>
+              <div class="ref-url">database.chessmont.com</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[5]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://www.chessprogramming.org/Zobrist_Hashing" target="_blank" rel="noopener">Zobrist Hashing</a></div>
+              <div class="ref-meta">Chess Programming Wiki · Albert Zobrist, 1970</div>
+              <div class="ref-url">chessprogramming.org/Zobrist_Hashing</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[6]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://arxiv.org/abs/1611.01146" target="_blank" rel="noopener">Virtual Loss for Monte-Carlo Tree Search</a></div>
+              <div class="ref-meta">Chaslot et al. · техника batch MCTS</div>
+              <div class="ref-url">arxiv.org/abs/1611.01146</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[7]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://www.shredderchess.com/chess-features/uci-universal-chess-interface.html" target="_blank" rel="noopener">UCI — Universal Chess Interface</a></div>
+              <div class="ref-meta">Stefan Meyer-Kahlen & Rudolf Huber · протокол для шахматных движков</div>
+              <div class="ref-url">shredderchess.com/chess-features/uci.html</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[8]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://github.com/niklasf/python-chess" target="_blank" rel="noopener">python-chess</a></div>
+              <div class="ref-meta">Niklas Fiekas · библиотека для работы с шахматами на Python</div>
+              <div class="ref-url">github.com/niklasf/python-chess</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[9]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://github.com/official-stockfish/Stockfish" target="_blank" rel="noopener">Stockfish</a></div>
+              <div class="ref-meta">Сильнейший классический шахматный движок с открытым кодом</div>
+              <div class="ref-url">github.com/official-stockfish/Stockfish</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[10]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://lczero.org/" target="_blank" rel="noopener">Leela Chess Zero</a></div>
+              <div class="ref-meta">Открытая реимплементация AlphaZero на базе распределённых вычислений</div>
+              <div class="ref-url">lczero.org</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[11]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://github.com/lichess-bot-devs/lichess-bot" target="_blank" rel="noopener">lichess-bot</a></div>
+              <div class="ref-meta">Фреймворк для запуска UCI-движков на Lichess</div>
+              <div class="ref-url">github.com/lichess-bot-devs/lichess-bot</div>
+            </div>
+          </div>
+
+          <div class="ref reveal">
+            <div class="ref-num">[12]</div>
+            <div class="ref-body">
+              <div class="ref-title"><a href="https://www.chessprogramming.org/" target="_blank" rel="noopener">Chess Programming Wiki</a></div>
+              <div class="ref-meta">Основной справочный ресурс по программированию шахмат</div>
+              <div class="ref-url">chessprogramming.org</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           7 · GLOSSARY
+           ============================================================ -->
+      <section class="section" id="s7">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 07</div>
+          <h2 class="section-title">Глоссарий</h2>
+          <p class="section-lede">
+            Термины, использованные в отчёте, с определениями.
+          </p>
+        </div>
+
+        <div class="glossary">
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Alpha-beta отсечение</div>
+            <div class="glossary-def">Алгоритм поиска, сокращающий перебор minimax-дерева за счёт отсечения веток, заведомо не влияющих на итоговое решение. Уменьшает сложность с O(b<sup>d</sup>) до O(b<sup>d/2</sup>) при идеальном порядке ходов.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Policy (π)</div>
+            <div class="glossary-def">Распределение вероятностей по возможным ходам. В AlphaZero-style сетях предсказывается нейросетью и используется как prior в MCTS.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Value (V)</div>
+            <div class="glossary-def">Оценка позиции в диапазоне [−1, +1], где +1 — победа игрока, чей ход, −1 — поражение, 0 — ничья.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Tapered eval</div>
+            <div class="glossary-def">Метод интерполяции между двумя наборами параметров (midgame, endgame) по «фазе игры». Позволяет одной оценочной функции работать и в дебюте, и в эндшпиле.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">PST (Piece-Square Table)</div>
+            <div class="glossary-def">Таблица весов для каждой комбинации «тип фигуры × клетка». Классический признак в оценочных функциях шахматных движков.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Zobrist hashing</div>
+            <div class="glossary-def">Метод хеширования позиции: каждой (фигура, клетка) сопоставлено случайное число, ключ позиции — XOR всех. Позволяет инкрементально обновлять ключ при push/pop хода.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Quiescence search</div>
+            <div class="glossary-def">Продление поиска в листьях дерева только по «громким» ходам (взятия, превращения). Решает проблему horizon effect.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Horizon effect</div>
+            <div class="glossary-def">Ситуация, когда движок не видит последствий хода, отложенных за «горизонтом» поиска — например, отыгрыш фигуры на следующей глубине.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">MVV-LVA</div>
+            <div class="glossary-def">Most Valuable Victim — Least Valuable Attacker. Эвристика сортировки взятий: выгоднее бить ценные фигуры дешёвыми.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Killer move</div>
+            <div class="glossary-def">Тихий ход, вызвавший beta-cutoff в предыдущей ветке на той же глубине. Хранится для приоритетной сортировки.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">PUCT</div>
+            <div class="glossary-def">Polynomial Upper Confidence for Trees. Формула выбора дочернего узла в MCTS, балансирующая exploitation (Q) и exploration (P·√N/(1+N)).</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Virtual loss</div>
+            <div class="glossary-def">Техника батчирования MCTS: временное «наказание» посещённых узлов, чтобы следующие выборки в батче шли по другим веткам.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">SE-блок (Squeeze-and-Excitation)</div>
+            <div class="glossary-def">Модуль внимания в CNN, адаптивно пересчитывающий веса каналов. Используется в ResBlock-ах для усиления значимых признаков.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Self-play</div>
+            <div class="glossary-def">Метод обучения, при котором агент играет против самого себя, генерируя данные для обучения. Используется в AlphaZero.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">ELO</div>
+            <div class="glossary-def">Рейтинговая система, оценивающая силу игрока. Разница в 100 ELO ≈ 64% ожидаемых очков в очной встрече.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">UCI</div>
+            <div class="glossary-def">Universal Chess Interface — стандартный текстовый протокол взаимодействия GUI с шахматным движком.</div>
+          </div>
+
+          <div class="glossary-item reveal">
+            <div class="glossary-term">Sparse matmul</div>
+            <div class="glossary-def">Умножение разреженной матрицы (с большим числом нулей) на вектор. Позволяет не хранить и не обрабатывать нули, давая ускорение в 100–1000 раз.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           8 · APPENDIX
+           ============================================================ -->
+      <section class="section" id="s8">
+        <div class="section-head reveal">
+          <div class="section-number">Раздел 08</div>
+          <h2 class="section-title">Приложение</h2>
+          <p class="section-lede">
+            Технические детали: конфигурация, бенчмарки, воспроизводимость.
+          </p>
+        </div>
+
+        <h3 class="subhead" id="s8-1">
+          <span class="num">A.1</span>
+          <span>Гиперпараметры</span>
+        </h3>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Параметр</th>
+              <th style="width: 140px;">Значение</th>
+              <th>Контекст</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">K (sigmoid scale)</td><td class="mono">1 / 400</td><td>Texel eval</td></tr>
+            <tr><td class="mono">learning rate</td><td class="mono">1.0</td><td>Texel training</td></tr>
+            <tr><td class="mono">batch size</td><td class="mono">8192</td><td>Texel training</td></tr>
+            <tr><td class="mono">epochs</td><td class="mono">30</td><td>Texel training</td></tr>
+            <tr><td class="mono">β₁, β₂</td><td class="mono">0.9, 0.999</td><td>Adam optimizer</td></tr>
+            <tr><td class="mono">c_puct</td><td class="mono">1.5</td><td>MCTS PUCT</td></tr>
+            <tr><td class="mono">n_simulations</td><td class="mono">400</td><td>MCTS default</td></tr>
+            <tr><td class="mono">batch_size (MCTS)</td><td class="mono">16</td><td>Virtual loss</td></tr>
+            <tr><td class="mono">V_LOSS</td><td class="mono">3.0</td><td>Virtual loss penalty</td></tr>
+            <tr><td class="mono">temperature</td><td class="mono">0.0</td><td>Move selection</td></tr>
+            <tr><td class="mono">channels</td><td class="mono">256</td><td>ResNet tower</td></tr>
+            <tr><td class="mono">num_blocks</td><td class="mono">16</td><td>ResNet tower</td></tr>
+            <tr><td class="mono">history_len</td><td class="mono">3</td><td>Input planes</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="subhead" id="s8-2">
+          <span class="num">A.2</span>
+          <span>Системные требования</span>
+        </h3>
+
+        <table class="reveal">
+          <thead>
+            <tr>
+              <th>Компонент</th>
+              <th style="width: 200px;">Минимум</th>
+              <th>Рекомендуется</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Python</td><td class="mono">3.10+</td><td class="mono">3.11</td></tr>
+            <tr><td>CPU (Texel)</td><td class="mono">4 ядра</td><td class="mono">8+ ядер</td></tr>
+            <tr><td>RAM (Texel)</td><td class="mono">4 GB</td><td class="mono">8 GB</td></tr>
+            <tr><td>GPU (Neural)</td><td class="mono">CUDA-capable</td><td class="mono">NVIDIA T4 или выше</td></tr>
+            <tr><td>RAM (Neural)</td><td class="mono">8 GB</td><td class="mono">16 GB</td></tr>
+            <tr><td>Disk (dataset)</td><td class="mono">10 GB</td><td class="mono">50+ GB</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="subhead" id="s8-3">
+          <span class="num">A.3</span>
+          <span>Воспроизводимость</span>
+        </h3>
+
+        <div class="prose reveal">
+          <p>
+            Все эксперименты, описанные в отчёте, воспроизводимы с помощью
+            скриптов из репозитория. Ключевые шаги:
+          </p>
+        </div>
+
+        <div class="code reveal">
+          <div class="code-header">
+            <span>reproduce.sh</span>
+            <span class="lang">Bash</span>
+          </div>
+<pre><span class="c"># 1. Установка зависимостей</span>
+pip install -r requirements.txt
+
+<span class="c"># 2. Обучение Texel-eval (≈1 минута на CPU)</span>
+python texel/train_from_pgn.py lichess-2400-eval.pgn.zst \
+    --out weights.json \
+    --epochs 30 \
+    --workers 8 \
+    --init-material \
+    --checkpoint-dir ./ckpt
+
+<span class="c"># 3. Проверка силы классического движка</span>
+python texel/engine.py --bench
+
+<span class="c"># 4. Проверка нейросетевого движка</span>
+CHESS_MODEL_PATH=chess_dualhead_best.pth \
+    python neural/uci_engine.py bench
+
+<span class="c"># 5. Тестовая партия против Stockfish</span>
+python neural/vs_stockfish.py</pre>
+        </div>
+
+        <div class="callout">
+          <div class="callout-label">Воспроизводимость</div>
+          <p>
+            Скрипты фиксируют random seed в начале каждого запуска
+            (<code>--seed 0</code> по умолчанию), что делает результаты
+            детерминированными при одинаковой версии PyTorch и NumPy.
+          </p>
+        </div>
+
+        <h3 class="subhead" id="s8-4">
+          <span class="num">A.4</span>
+          <span>Структура репозитория</span>
+        </h3>
+
+        <div class="code reveal">
+          <div class="code-header">
+            <span>tree</span>
+            <span class="lang">Layout</span>
+          </div>
+<pre>chess-engine/
+├── index.html                     <span class="c"># Технический отчёт (этот файл)</span>
+├── README.md
+├── LICENSE
+├── requirements.txt
+├── config.yml                     <span class="c"># lichess-bot конфигурация</span>
+│
+├── texel/                         <span class="c"># Классический движок</span>
+│   ├── features.py                <span class="c"># Признаки позиции (768 параметров)</span>
+│   ├── tuner.py                   <span class="c"># Adam-оптимизация весов</span>
+│   ├── engine.py                  <span class="c"># Alpha-beta + TT + quiescence</span>
+│   ├── prepare_data_pgn.py        <span class="c"># PGN → jsonl конвертер</span>
+│   ├── data_compile.py            <span class="c"># Стратифицированная выборка</span>
+│   └── train_from_pgn.py          <span class="c"># End-to-end обучение</span>
+│
+├── neural/                        <span class="c"># Нейросетевой движок</span>
+│   ├── chess_engine.py            <span class="c"># DualHeadResNet + MCTS</span>
+│   ├── uci_engine.py              <span class="c"># UCI-протокол для Lichess</span>
+│   ├── play_gradio.py             <span class="c"># Gradio-интерфейс</span>
+│   └── vs_stockfish.py            <span class="c"># Тест силы</span>
+│
+├── web/                           <span class="c"># Веб-интерфейсы</span>
+│   ├── web_app.py                 <span class="c"># FastAPI + React</span>
+│   └── server.py                  <span class="c"># Flask + React</span>
+│
+└── notebooks/                     <span class="c"># Colab-ноутбуки</span>
+    ├── texel_tuning_colab.ipynb
+    └── neural_training_colab.ipynb</pre>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ==========================================================================
+     FOOTER
+     ========================================================================== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-col">
+      <strong>Документ</strong>
+      <span>Chess Engine — Technical Report</span>
+      <span>Версия 2.0 · 2026</span>
+      <span>MIT License</span>
+    </div>
+    <div class="footer-col">
+      <strong>Разделы</strong>
+      <a href="#s1">1 · Введение</a>
+      <a href="#s2">2 · Оценка позиции</a>
+      <a href="#s3">3 · Поиск</a>
+      <a href="#s4">4 · Нейросети</a>
+    </div>
+    <div class="footer-col">
+      <strong>Внешние ресурсы</strong>
+      <a href="https://www.chessprogramming.org/" target="_blank" rel="noopener">Chess Programming Wiki</a>
+      <a href="https://database.lichess.org/" target="_blank" rel="noopener">Lichess Database</a>
+      <a href="https://github.com/niklasf/python-chess" target="_blank" rel="noopener">python-chess</a>
+      <a href="https://lczero.org/" target="_blank" rel="noopener">Leela Chess Zero</a>
+    </div>
+    <div class="footer-col">
+      <strong>Обратная связь</strong>
+      <a href="https://github.com/" target="_blank" rel="noopener">GitHub Repository</a>
+      <a href="https://lichess.org/" target="_blank" rel="noopener">Play on Lichess</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ==========================================================================
+   PROGRESS BAR
+   ========================================================================== */
+const progress = document.getElementById('progress');
+window.addEventListener('scroll', () => {
+  const h = document.documentElement.scrollHeight - window.innerHeight;
+  progress.style.width = (window.scrollY / h * 100) + '%';
+});
+
+/* ==========================================================================
+   REVEAL ON SCROLL
+   ========================================================================== */
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.08, rootMargin: '0px 0px -60px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ==========================================================================
+   SIDEBAR ACTIVE LINK
+   ========================================================================== */
+const sections = document.querySelectorAll('section[id], section[id^="s"]');
+const sidebarLinks = document.querySelectorAll('.sidebar a');
+
+const navObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      sidebarLinks.forEach(l => l.classList.remove('active'));
+      const id = e.target.id;
+      const link = document.querySelector(`.sidebar a[href="#${id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+
+document.querySelectorAll('section[id]').forEach(s => navObserver.observe(s));
+
+/* ==========================================================================
+   GSAP subtle parallax on title page
+   ========================================================================== */
+if (window.gsap && window.ScrollTrigger) {
+  gsap.registerPlugin(ScrollTrigger);
+
+  gsap.to('.title-main', {
+    y: -20,
+    ease: 'none',
+    scrollTrigger: {
+      trigger: '.title-page',
+      start: 'top top',
+      end: 'bottom top',
+      scrub: true
+    }
+  });
+}
+</script>
+
+</body>
+</html>
