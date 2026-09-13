@@ -708,7 +708,7 @@ zstandard>=0.21      # для распаковки .pgn.zst
 [Chess Programming Wiki](https://www.chessprogramming.org/) &nbsp;·&nbsp;
 [Lichess Database](https://database.lichess.org/) &nbsp;·&nbsp;
 [AlphaZero Paper](https://arxiv.org/abs/1712.01815) &nbsp;·&nbsp;
-[Leela Chess Zero](https://lczero.org/)
+[Leela Chess Zero](https://lczero.org/) &nbsp;·&nbsp;
 [Interesting data and files](https://drive.google.com/drive/folders/1ax7fn876b3cY4Jqk0K_pxnmulKn9acFK?usp=sharing)
 
 </div>
