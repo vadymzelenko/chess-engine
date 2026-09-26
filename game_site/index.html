@@ -96,8 +96,11 @@
                     Ход назад
                 </button>
             </div>
-            
-            <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-2">История ходов</div>
+
+            <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-2 flex items-center justify-between">
+                <span>История ходов</span>
+                <span id="depthInfo" class="text-zinc-600 normal-case font-mono"></span>
+            </div>
             
             <div id="history" class="flex-1 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start min-h-0"></div>
         </div>
@@ -106,12 +109,333 @@
     <!-- ВОРКЕР ИИ -->
     <script id="worker-code" type="text/worker">
         importScripts('https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js');
-        
+
         let customWeights = null;
         const engine = new Chess();
 
+        // Тайм-бюджет на ход (мс). Держим с запасом от требуемых 3-4с,
+        // чтобы гарантированно успеть отдать ответ.
+        const TIME_BUDGET_MS = 3500;
+        const MAX_DEPTH = 64; // практический потолок, реально ограничено временем
+
+        // ---------- Материальные и позиционные веса ----------
+        const DEFAULT_MATERIAL = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
+
+        // Piece-square таблицы (с точки зрения белых, индекс = row*8+col, row 0 = 8-я горизонталь)
+        const PST = {
+            p: [
+                0,  0,  0,  0,  0,  0,  0,  0,
+                50, 50, 50, 50, 50, 50, 50, 50,
+                10, 10, 20, 30, 30, 20, 10, 10,
+                5,  5, 10, 25, 25, 10,  5,  5,
+                0,  0,  0, 20, 20,  0,  0,  0,
+                5, -5,-10,  0,  0,-10, -5,  5,
+                5, 10, 10,-20,-20, 10, 10,  5,
+                0,  0,  0,  0,  0,  0,  0,  0
+            ],
+            n: [
+                -50,-40,-30,-30,-30,-30,-40,-50,
+                -40,-20,  0,  0,  0,  0,-20,-40,
+                -30,  0, 10, 15, 15, 10,  0,-30,
+                -30,  5, 15, 20, 20, 15,  5,-30,
+                -30,  0, 15, 20, 20, 15,  0,-30,
+                -30,  5, 10, 15, 15, 10,  5,-30,
+                -40,-20,  0,  5,  5,  0,-20,-40,
+                -50,-40,-30,-30,-30,-30,-40,-50
+            ],
+            b: [
+                -20,-10,-10,-10,-10,-10,-10,-20,
+                -10,  0,  0,  0,  0,  0,  0,-10,
+                -10,  0,  5, 10, 10,  5,  0,-10,
+                -10,  5,  5, 10, 10,  5,  5,-10,
+                -10,  0, 10, 10, 10, 10,  0,-10,
+                -10, 10, 10, 10, 10, 10, 10,-10,
+                -10,  5,  0,  0,  0,  0,  5,-10,
+                -20,-10,-10,-10,-10,-10,-10,-20
+            ],
+            r: [
+                0,  0,  0,  0,  0,  0,  0,  0,
+                5, 10, 10, 10, 10, 10, 10,  5,
+                -5,  0,  0,  0,  0,  0,  0, -5,
+                -5,  0,  0,  0,  0,  0,  0, -5,
+                -5,  0,  0,  0,  0,  0,  0, -5,
+                -5,  0,  0,  0,  0,  0,  0, -5,
+                -5,  0,  0,  0,  0,  0,  0, -5,
+                0,  0,  0,  5,  5,  0,  0,  0
+            ],
+            q: [
+                -20,-10,-10, -5, -5,-10,-10,-20,
+                -10,  0,  0,  0,  0,  0,  0,-10,
+                -10,  0,  5,  5,  5,  5,  0,-10,
+                -5,  0,  5,  5,  5,  5,  0, -5,
+                0,  0,  5,  5,  5,  5,  0, -5,
+                -10,  5,  5,  5,  5,  5,  0,-10,
+                -10,  0,  5,  0,  0,  0,  0,-10,
+                -20,-10,-10, -5, -5,-10,-10,-20
+            ],
+            k: [
+                -30,-40,-40,-50,-50,-40,-40,-30,
+                -30,-40,-40,-50,-50,-40,-40,-30,
+                -30,-40,-40,-50,-50,-40,-40,-30,
+                -30,-40,-40,-50,-50,-40,-40,-30,
+                -20,-30,-30,-40,-40,-30,-30,-20,
+                -10,-20,-20,-20,-20,-20,-20,-10,
+                20, 20,  0,  0,  0,  0, 20, 20,
+                20, 30, 10,  0,  0, 10, 30, 20
+            ],
+            // Эндшпильная таблица короля (когда мало материала) — тянем к центру
+            k_end: [
+                -50,-40,-30,-20,-20,-30,-40,-50,
+                -30,-20,-10,  0,  0,-10,-20,-30,
+                -30,-10, 20, 30, 30, 20,-10,-30,
+                -30,-10, 30, 40, 40, 30,-10,-30,
+                -30,-10, 30, 40, 40, 30,-10,-30,
+                -30,-10, 20, 30, 30, 20,-10,-30,
+                -30,-30,  0,  0,  0,  0,-30,-30,
+                -50,-30,-30,-30,-30,-30,-30,-50
+            ]
+        };
+
+        function materialValue(type) {
+            if (customWeights && customWeights[type] != null) return customWeights[type];
+            return DEFAULT_MATERIAL[type];
+        }
+
+        // Транспозиционная таблица: fen(без счётчиков ходов) -> {depth, score, flag, move}
+        let tt = new Map();
+        const TT_MAX_SIZE = 200000;
+        const TT_EXACT = 0, TT_LOWER = 1, TT_UPPER = 2;
+
+        function ttKey(fen) {
+            // Отбрасываем счётчики полуходов/номер хода — они не влияют на оценку позиции
+            const parts = fen.split(' ');
+            return parts.slice(0, 4).join(' ');
+        }
+
+        let nodeCount = 0;
+        let deadline = 0;
+        let timeUp = false;
+
+        function checkTime() {
+            if ((nodeCount & 1023) === 0) {
+                if (performance.now() > deadline) timeUp = true;
+            }
+        }
+
+        function totalMaterial() {
+            const board = engine.board();
+            let total = 0;
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    const p = board[i][j];
+                    if (p && p.type !== 'k') total += materialValue(p.type);
+                }
+            }
+            return total;
+        }
+
+        function evaluateBoard() {
+            const board = engine.board();
+            let score = 0;
+            const endgame = totalMaterial() < 2600; // грубый порог перехода в эндшпиль
+
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    const piece = board[i][j];
+                    if (!piece) continue;
+
+                    let val = materialValue(piece.type);
+                    let pstTable = piece.type === 'k' && endgame ? PST.k_end : PST[piece.type];
+                    let idx = piece.color === 'w' ? (i * 8 + j) : ((7 - i) * 8 + j);
+                    let pstVal = pstTable ? pstTable[idx] : 0;
+
+                    const total = val + pstVal;
+                    score += piece.color === 'w' ? total : -total;
+                }
+            }
+
+            // Небольшой бонус за подвижность (мобильность) — считаем дёшево через moves count
+            return engine.turn() === 'w' ? score : -score;
+        }
+
+        // MVV-LVA + промоции + TT-ход впереди для упорядочивания ходов
+        function scoreMove(m, ttMove) {
+            if (ttMove && m.from === ttMove.slice(0,2) && m.to === ttMove.slice(2,4)) {
+                return 100000;
+            }
+            let s = 0;
+            if (m.flags.includes('c') || m.flags.includes('e')) {
+                const victim = m.flags.includes('e') ? 100 : materialValue(m.captured);
+                const attacker = materialValue(m.piece);
+                s += 10000 + victim * 10 - attacker;
+            }
+            if (m.promotion) s += 9000;
+            return s;
+        }
+
+        function orderMoves(moves, ttMove) {
+            return moves
+                .map(m => ({ m, s: scoreMove(m, ttMove) }))
+                .sort((a, b) => b.s - a.s)
+                .map(x => x.m);
+        }
+
+        // Quiescence search: досчитываем взятия, чтобы не спотыкаться на горизонте
+        function quiescence(alpha, beta, qdepth) {
+            nodeCount++;
+            checkTime();
+            if (timeUp) return evaluateBoard();
+
+            const standPat = evaluateBoard();
+            if (standPat >= beta) return beta;
+            if (standPat > alpha) alpha = standPat;
+            if (qdepth <= 0) return standPat;
+
+            const moves = engine.moves({ verbose: true }).filter(m => m.flags.includes('c') || m.flags.includes('e'));
+            const ordered = orderMoves(moves, null);
+
+            for (let i = 0; i < ordered.length; i++) {
+                engine.move(ordered[i]);
+                const score = -quiescence(-beta, -alpha, qdepth - 1);
+                engine.undo();
+
+                if (timeUp) return alpha;
+                if (score >= beta) return beta;
+                if (score > alpha) alpha = score;
+            }
+            return alpha;
+        }
+
+        function alphaBeta(depth, alpha, beta, ply) {
+            nodeCount++;
+            checkTime();
+            if (timeUp) return 0;
+
+            const key = ttKey(engine.fen());
+            const entry = tt.get(key);
+            let ttMove = null;
+            if (entry) {
+                ttMove = entry.move;
+                if (entry.depth >= depth) {
+                    if (entry.flag === TT_EXACT) return entry.score;
+                    if (entry.flag === TT_LOWER && entry.score > alpha) alpha = entry.score;
+                    else if (entry.flag === TT_UPPER && entry.score < beta) beta = entry.score;
+                    if (alpha >= beta) return entry.score;
+                }
+            }
+
+            if (depth === 0) {
+                return quiescence(alpha, beta, 4);
+            }
+
+            const rawMoves = engine.moves({ verbose: true });
+            if (rawMoves.length === 0) {
+                return engine.in_check() ? -99999 + ply : 0;
+            }
+
+            const moves = orderMoves(rawMoves, ttMove);
+
+            let bestScore = -Infinity;
+            let bestMove = null;
+            const alphaOrig = alpha;
+
+            for (let i = 0; i < moves.length; i++) {
+                engine.move(moves[i]);
+                const score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1);
+                engine.undo();
+
+                if (timeUp) return bestScore === -Infinity ? 0 : bestScore;
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMove = moves[i];
+                }
+                if (bestScore > alpha) alpha = bestScore;
+                if (alpha >= beta) break; // отсечение
+            }
+
+            if (!timeUp) {
+                let flag = TT_EXACT;
+                if (bestScore <= alphaOrig) flag = TT_UPPER;
+                else if (bestScore >= beta) flag = TT_LOWER;
+
+                if (tt.size > TT_MAX_SIZE) tt.clear(); // простая защита от разрастания
+                tt.set(key, {
+                    depth,
+                    score: bestScore,
+                    flag,
+                    move: bestMove ? (bestMove.from + bestMove.to + (bestMove.promotion || '')) : null
+                });
+            }
+
+            return bestScore;
+        }
+
+        function searchBestMove(fen, timeBudgetMs) {
+            engine.load(fen);
+            nodeCount = 0;
+            timeUp = false;
+            deadline = performance.now() + timeBudgetMs;
+
+            const rootMoves = engine.moves({ verbose: true });
+            if (rootMoves.length === 0) return { move: null, depth: 0 };
+            if (rootMoves.length === 1) {
+                const m = rootMoves[0];
+                return { move: m.from + m.to + (m.promotion || ''), depth: 1 };
+            }
+
+            let bestMoveStr = null;
+            let lastCompletedDepth = 0;
+            let ttMove = null;
+
+            // Iterative deepening: с каждой завершённой итерацией храним лучший ход,
+            // если время истекает в середине поиска — используем предыдущий надёжный результат.
+            for (let depth = 1; depth <= MAX_DEPTH; depth++) {
+                let alpha = -Infinity, beta = Infinity;
+                let bestScoreThisDepth = -Infinity;
+                let bestMoveThisDepth = null;
+
+                const moves = orderMoves(rootMoves, ttMove);
+
+                for (let i = 0; i < moves.length; i++) {
+                    engine.move(moves[i]);
+                    const score = -alphaBeta(depth - 1, -beta, -alpha, 1);
+                    engine.undo();
+
+                    if (timeUp) break;
+
+                    if (score > bestScoreThisDepth) {
+                        bestScoreThisDepth = score;
+                        bestMoveThisDepth = moves[i];
+                    }
+                    if (score > alpha) alpha = score;
+                }
+
+                if (timeUp) break;
+
+                if (bestMoveThisDepth) {
+                    bestMoveStr = bestMoveThisDepth.from + bestMoveThisDepth.to + (bestMoveThisDepth.promotion || '');
+                    ttMove = bestMoveStr;
+                    lastCompletedDepth = depth;
+                }
+
+                // Если время уже почти вышло — не начинаем следующую (заведомо более дорогую) итерацию
+                if (performance.now() > deadline - 30) break;
+                // Нашли форсированный мат — нет смысла копать глубже
+                if (bestScoreThisDepth > 90000) break;
+            }
+
+            if (!bestMoveStr) {
+                // Подстраховка на случай, если не успели закончить даже depth=1
+                const m = rootMoves[0];
+                bestMoveStr = m.from + m.to + (m.promotion || '');
+            }
+
+            return { move: bestMoveStr, depth: lastCompletedDepth };
+        }
+
         self.onmessage = async function(e) {
-            const { type, fen, depth } = e.data;
+            const { type, fen } = e.data;
 
             if (type === 'INIT') {
                 try {
@@ -125,72 +449,10 @@
             }
 
             if (type === 'SEARCH') {
-                const bestMove = searchBestMove(fen, depth || 3);
-                self.postMessage({ type: 'BEST_MOVE', move: bestMove });
+                const result = searchBestMove(fen, TIME_BUDGET_MS);
+                self.postMessage({ type: 'BEST_MOVE', move: result.move, depth: result.depth, nodes: nodeCount });
             }
         };
-
-        function searchBestMove(fen, depth) {
-            engine.load(fen);
-            const moves = engine.moves({ verbose: true });
-            if (moves.length === 0) return null;
-            
-            let bestMove = null;
-            let bestValue = -Infinity;
-            let alpha = -Infinity;
-            let beta = Infinity;
-            
-            for (let i = 0; i < moves.length; i++) {
-                engine.move(moves[i]);
-                const boardValue = -alphaBeta(depth - 1, -beta, -alpha);
-                engine.undo();
-                
-                if (boardValue > bestValue) {
-                    bestValue = boardValue;
-                    bestMove = moves[i];
-                }
-                alpha = Math.max(alpha, boardValue);
-            }
-            return bestMove ? (bestMove.from + bestMove.to + (bestMove.promotion || '')) : null;
-        }
-
-        function alphaBeta(depth, alpha, beta) {
-            if (depth === 0) return evaluateBoard();
-            
-            const moves = engine.moves();
-            if (moves.length === 0) return engine.in_check() ? -99999 : 0;
-            
-            let bestValue = -Infinity;
-            for (let i = 0; i < moves.length; i++) {
-                engine.move(moves[i]);
-                bestValue = Math.max(bestValue, -alphaBeta(depth - 1, -beta, -alpha));
-                engine.undo();
-                
-                alpha = Math.max(alpha, bestValue);
-                if (alpha >= beta) break;
-            }
-            return bestValue;
-        }
-
-        function evaluateBoard() {
-            const board = engine.board();
-            let score = 0;
-            const defaults = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
-            
-            for (let i = 0; i < 8; i++) {
-                for (let j = 0; j < 8; j++) {
-                    const piece = board[i][j];
-                    if (piece) {
-                        let val = defaults[piece.type];
-                        if (customWeights && customWeights[piece.type]) {
-                            val = customWeights[piece.type]; 
-                        }
-                        score += piece.color === 'w' ? val : -val;
-                    }
-                }
-            }
-            return engine.turn() === 'w' ? score : -score;
-        }
     </script>
 
     <!-- ЛОГИКА ИНТЕРФЕЙСА -->
@@ -198,6 +460,7 @@
         const game = new Chess();
         const statusEl = document.getElementById('status');
         const historyEl = document.getElementById('history');
+        const depthInfoEl = document.getElementById('depthInfo');
         let selectedSquare = null;
 
         const workerCode = document.getElementById('worker-code').textContent;
@@ -205,14 +468,18 @@
         const engineWorker = new Worker(URL.createObjectURL(blob));
 
         engineWorker.onmessage = function(e) {
-            const { type, msg, move } = e.data;
+            const { type, msg, move, depth, nodes } = e.data;
 
             if (type === 'READY') {
                 statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span>${msg}`;
             } else if (type === 'BEST_MOVE') {
                 // Если ход пришел, но мы уже отменили свой (наш ход) - игнорируем ответ бота
                 if (game.turn() === 'w') return;
-                
+
+                if (depth) {
+                    depthInfoEl.textContent = `глубина ${depth}${nodes ? ' · ' + nodes.toLocaleString('ru') + ' узлов' : ''}`;
+                }
+
                 if (move) {
                     game.move({ from: move.substring(0, 2), to: move.substring(2, 4), promotion: move.charAt(4) || 'q' });
                     board.position(game.fen());
@@ -329,7 +596,8 @@
         function triggerEngine() {
             if (!game.game_over()) {
                 statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>Думает...';
-                engineWorker.postMessage({ type: 'SEARCH', fen: game.fen(), depth: 3 });
+                depthInfoEl.textContent = '';
+                engineWorker.postMessage({ type: 'SEARCH', fen: game.fen() });
             }
         }
 
@@ -339,6 +607,7 @@
             board.start();
             selectedSquare = null;
             clearHighlights();
+            depthInfoEl.textContent = '';
             updateUI();
         };
 
