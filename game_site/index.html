@@ -19,22 +19,31 @@
             font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; 
         }
         
-        /* Стилизация доски */
         #board { 
             border: 1px solid #27272a; 
             border-radius: 8px; 
             overflow: hidden; 
-            filter: grayscale(20%) contrast(1.05); /* Делаем доску более премиальной */
+            filter: grayscale(20%) contrast(1.05);
             box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 30px 60px -10px rgba(0,0,0,0.5);
+            cursor: pointer; /* Указываем, что доска кликабельна */
         }
 
-        /* Кастомный скроллбар для эстетики */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #52525b; }
 
-        /* Подсветка возможных ходов в стиле Lichess */
+        /* Стили выделения и подсказок */
+        .highlight-selected { position: relative; }
+        .highlight-selected::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(34, 197, 94, 0.35);
+            z-index: 1;
+            pointer-events: none;
+        }
+
         .highlight-move, .highlight-capture { position: relative; }
         .highlight-move::after {
             content: '';
@@ -65,7 +74,6 @@
 
     <div class="w-full max-w-5xl h-full max-h-[700px] grid grid-cols-1 md:grid-cols-[2fr_1.2fr] gap-6 md:gap-10 items-start">
         
-        <!-- Левая часть: Доска -->
         <div class="flex flex-col gap-5 h-full">
             <div class="flex justify-between items-end px-1">
                 <h1 class="text-2xl font-semibold tracking-tight text-white">Custom Engine</h1>
@@ -74,13 +82,11 @@
                     Запуск...
                 </div>
             </div>
-            <!-- aspect-square гарантирует правильные пропорции, w-full/max-w ограничивают рост -->
             <div class="w-full max-w-[600px] mx-auto aspect-square">
                 <div id="board" class="w-full h-full"></div>
             </div>
         </div>
 
-        <!-- Правая часть: Управление и История -->
         <div class="flex flex-col gap-4 bg-zinc-900/40 p-5 rounded-xl border border-zinc-800/80 h-full max-h-[600px] shadow-xl backdrop-blur-sm">
             <div class="flex gap-2 w-full">
                 <button onclick="resetGame()" class="flex-1 py-2 bg-white text-zinc-950 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors shadow-sm">
@@ -93,10 +99,7 @@
             
             <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-2">История ходов</div>
             
-            <!-- min-h-0 и flex-1 решают проблему с растягиванием страницы -->
-            <div id="history" class="flex-1 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start min-h-0">
-                <!-- Ходы будут рендериться сюда -->
-            </div>
+            <div id="history" class="flex-1 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start min-h-0"></div>
         </div>
     </div>
 
@@ -117,7 +120,6 @@
                     customWeights = await res.json();
                     self.postMessage({ type: 'READY', msg: 'Готов (свои веса)' });
                 } catch (error) {
-                    // Обработка ошибки загрузки: тихо продолжаем с базовыми весами
                     self.postMessage({ type: 'READY', msg: 'Готов (базовые веса)' });
                 }
             }
@@ -196,6 +198,7 @@
         const game = new Chess();
         const statusEl = document.getElementById('status');
         const historyEl = document.getElementById('history');
+        let selectedSquare = null;
 
         const workerCode = document.getElementById('worker-code').textContent;
         const blob = new Blob([workerCode], { type: 'application/javascript' });
@@ -207,6 +210,9 @@
             if (type === 'READY') {
                 statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span>${msg}`;
             } else if (type === 'BEST_MOVE') {
+                // Если ход пришел, но мы уже отменили свой (наш ход) - игнорируем ответ бота
+                if (game.turn() === 'w') return;
+                
                 if (move) {
                     game.move({ from: move.substring(0, 2), to: move.substring(2, 4), promotion: move.charAt(4) || 'q' });
                     board.position(game.fen());
@@ -220,7 +226,6 @@
         function updateUI() {
             const history = game.history();
             let html = '';
-            // Форматируем историю в две колонки: 1. e4 e5
             for (let i = 0; i < history.length; i += 2) {
                 html += `<div class="text-zinc-500 flex justify-between"><span class="text-zinc-600">${Math.floor(i/2) + 1}.</span> <span class="text-zinc-200">${history[i]}</span></div>`;
                 if (history[i+1]) {
@@ -241,49 +246,119 @@
             }
         }
 
-        function clearHighlights() {
-            $('#board .square-55d63').removeClass('highlight-move highlight-capture');
-        }
-
-        function onDragStart(source, piece) {
-            if (game.game_over() || piece.search(/^b/) !== -1) return false;
-
-            // Получаем доступные ходы и рисуем точки (как на Lichess)
-            const moves = game.moves({ square: source, verbose: true });
-            if (moves.length === 0) return;
-
+        function showHighlights(square) {
+            clearHighlights();
+            $('#board .square-' + square).addClass('highlight-selected');
+            
+            const moves = game.moves({ square: square, verbose: true });
             moves.forEach(m => {
                 const sqEl = $('#board .square-' + m.to);
                 if (m.flags.includes('c') || m.flags.includes('e')) {
-                    sqEl.addClass('highlight-capture'); // Круг захвата
+                    sqEl.addClass('highlight-capture');
                 } else {
-                    sqEl.addClass('highlight-move'); // Точка обычного хода
+                    sqEl.addClass('highlight-move');
                 }
             });
         }
 
+        function clearHighlights() {
+            $('#board .square-55d63').removeClass('highlight-move highlight-capture highlight-selected');
+        }
+
+        // --- ЛОГИКА ДЛЯ ПЕРЕТЯГИВАНИЯ ---
+        function onDragStart(source, piece) {
+            if (game.game_over() || piece.search(/^b/) !== -1 || game.turn() === 'b') return false;
+            selectedSquare = source;
+            showHighlights(source);
+        }
+
         function onDrop(source, target) {
             clearHighlights();
+            selectedSquare = null;
             
             const move = game.move({ from: source, to: target, promotion: 'q' });
-            
-            // Если ход неверный - фигура вернется обратно
             if (move === null) return 'snapback';
             
-            // ВАЖНО: мы не вызываем board.position() здесь!
-            // Это избавляет от бага с двойной анимацией (рывка фигуры).
             updateUI();
+            triggerEngine();
+        }
 
+        function onSnapEnd() {
+            board.position(game.fen());
+        }
+
+        // --- ЛОГИКА ДЛЯ КЛИКОВ ---
+        $('#board').on('click', '.square-55d63', function() {
+            if (game.game_over() || game.turn() === 'b') return;
+            
+            const square = $(this).attr('data-square');
+            const piece = game.get(square);
+            
+            // Клик по уже выбранной фигуре - отмена выделения
+            if (selectedSquare === square) {
+                selectedSquare = null;
+                clearHighlights();
+                return;
+            }
+
+            // Выбор другой своей фигуры
+            if (piece && piece.color === 'w') {
+                selectedSquare = square;
+                showHighlights(square);
+                return;
+            }
+
+            // Попытка сходить выбранной фигурой на пустую клетку или фигуру врага
+            if (selectedSquare) {
+                const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
+
+                if (move !== null) {
+                    board.position(game.fen()); // Анимация хода
+                    selectedSquare = null;
+                    clearHighlights();
+                    updateUI();
+                    triggerEngine();
+                } else {
+                    // Клик мимо - сбрасываем выделение
+                    selectedSquare = null;
+                    clearHighlights();
+                }
+            }
+        });
+
+        function triggerEngine() {
             if (!game.game_over()) {
                 statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>Думает...';
                 engineWorker.postMessage({ type: 'SEARCH', fen: game.fen(), depth: 3 });
             }
         }
 
-        // Синхронизация доски происходит ТОЛЬКО после того как анимация фигуры завершена
-        function onSnapEnd() {
+        // --- УПРАВЛЕНИЕ ---
+        window.resetGame = function() {
+            game.reset();
+            board.start();
+            selectedSquare = null;
+            clearHighlights();
+            updateUI();
+        };
+
+        window.undoMove = function() {
+            if (game.history().length === 0) return;
+            
+            // Если бот думает (ход черных) - отменяем только 1 наш ход
+            if (game.turn() === 'b') {
+                game.undo();
+            } else {
+                // Если сейчас наш ход (бот уже ответил) - отменяем ход бота и наш (2 хода)
+                game.undo();
+                game.undo();
+            }
+            
             board.position(game.fen());
-        }
+            selectedSquare = null;
+            clearHighlights();
+            updateUI();
+        };
 
         let board = Chessboard('board', {
             draggable: true,
@@ -295,22 +370,6 @@
             onSnapEnd: onSnapEnd,
             pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
         });
-
-        window.resetGame = function() {
-            game.reset();
-            board.start();
-            clearHighlights();
-            updateUI();
-        };
-
-        window.undoMove = function() {
-            // Отменяем 2 хода (ИИ и наш)
-            game.undo(); 
-            game.undo();
-            board.position(game.fen());
-            clearHighlights();
-            updateUI();
-        };
     </script>
 </body>
 </html>
