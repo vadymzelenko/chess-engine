@@ -3,37 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chess Engine</title>
-    
+    <title>Chess Engine — Analytics</title>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
     <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
-    
+
     <style>
         :root { color-scheme: dark; }
-        body { 
-            background-color: #000000; 
-            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; 
-        }
-        
-        #board { 
-            border: 1px solid #27272a; 
-            border-radius: 8px; 
-            overflow: hidden; 
-            filter: grayscale(20%) contrast(1.05);
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 30px 60px -10px rgba(0,0,0,0.5);
-            cursor: pointer; /* Указываем, что доска кликабельна */
+        body {
+            background-color: #000000;
+            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
 
-        ::-webkit-scrollbar { width: 6px; }
+        #board {
+            border: 1px solid #27272a;
+            border-radius: 8px;
+            overflow: hidden;
+            filter: grayscale(20%) contrast(1.05);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 30px 60px -10px rgba(0,0,0,0.5);
+            cursor: pointer;
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #52525b; }
 
-        /* Стили выделения и подсказок */
         .highlight-selected { position: relative; }
         .highlight-selected::before {
             content: '';
@@ -43,7 +42,6 @@
             z-index: 1;
             pointer-events: none;
         }
-
         .highlight-move, .highlight-capture { position: relative; }
         .highlight-move::after {
             content: '';
@@ -68,42 +66,150 @@
             pointer-events: none;
             z-index: 2;
         }
+
+        .panel {
+            background: rgba(24,24,27,0.5);
+            border: 1px solid rgba(63,63,70,0.6);
+            border-radius: 12px;
+            backdrop-filter: blur(6px);
+        }
+        .tab-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 8px;
+            color: #71717a;
+            transition: all .15s;
+        }
+        .tab-btn.active { background: #fff; color: #09090b; }
+        .tab-btn:not(.active):hover { color: #d4d4d8; }
+
+        .metric-card {
+            background: rgba(9,9,11,0.6);
+            border: 1px solid rgba(63,63,70,0.5);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #71717a; }
+        .metric-value { font-size: 17px; font-weight: 600; color: #fafafa; font-variant-numeric: tabular-nums; }
+
+        .pv-row { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; font-size:12px; }
+        .pv-row:hover { background: rgba(63,63,70,0.35); }
+
+        .tree-node-tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: #18181b;
+            border: 1px solid #3f3f46;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 11px;
+            color: #e4e4e7;
+            font-family: ui-monospace, monospace;
+            white-space: nowrap;
+            z-index: 50;
+            display: none;
+        }
+
+        #treeCanvas, #evolutionChart, #depthChart, #heatmapCanvas { display:block; width:100%; }
+
+        .glow-dot { box-shadow: 0 0 8px currentColor; }
     </style>
 </head>
-<body class="text-zinc-200 h-screen overflow-hidden flex flex-col items-center justify-center p-4 md:p-8">
+<body class="text-zinc-200 min-h-screen overflow-y-auto flex flex-col items-center p-4 md:p-6 gap-4">
 
-    <div class="w-full max-w-5xl h-full max-h-[700px] grid grid-cols-1 md:grid-cols-[2fr_1.2fr] gap-6 md:gap-10 items-start">
-        
-        <div class="flex flex-col gap-5 h-full">
-            <div class="flex justify-between items-end px-1">
-                <h1 class="text-2xl font-semibold tracking-tight text-white">Custom Engine</h1>
-                <div id="status" class="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-md text-xs font-mono text-zinc-400 flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                    Запуск...
+    <div class="w-full max-w-[1500px] flex flex-col gap-4">
+
+        <!-- ВЕРХНИЙ РЯД: доска + топ-линии + метрики -->
+        <div class="grid grid-cols-1 lg:grid-cols-[auto_1fr_280px] gap-4 items-start">
+
+            <!-- Доска -->
+            <div class="flex flex-col gap-3 w-full max-w-[420px] mx-auto lg:mx-0">
+                <div class="flex justify-between items-end px-1">
+                    <h1 class="text-xl font-semibold tracking-tight text-white">Custom Engine</h1>
+                    <div id="status" class="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-md text-xs font-mono text-zinc-400 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        Запуск...
+                    </div>
                 </div>
+                <div class="w-full aspect-square">
+                    <div id="board" class="w-full h-full"></div>
+                </div>
+                <div class="flex gap-2 w-full">
+                    <button onclick="resetGame()" class="flex-1 py-2 bg-white text-zinc-950 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors shadow-sm">
+                        Новая игра
+                    </button>
+                    <button onclick="undoMove()" class="flex-1 py-2 bg-zinc-800 text-zinc-100 text-sm font-medium rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700">
+                        Ход назад
+                    </button>
+                </div>
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between px-1">
+                    <span>История ходов</span>
+                </div>
+                <div id="history" class="h-32 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start"></div>
             </div>
-            <div class="w-full max-w-[600px] mx-auto aspect-square">
-                <div id="board" class="w-full h-full"></div>
+
+            <!-- Топ-линии + дерево -->
+            <div class="panel p-4 flex flex-col gap-3 min-h-[500px]">
+                <div class="flex items-center justify-between">
+                    <div class="flex gap-1">
+                        <button class="tab-btn active" data-tab="tree" onclick="switchTab('tree')">Дерево поиска</button>
+                        <button class="tab-btn" data-tab="lines" onclick="switchTab('lines')">Топ-линии</button>
+                    </div>
+                    <span id="searchInfo" class="text-[11px] font-mono text-zinc-600"></span>
+                </div>
+
+                <div id="tab-tree" class="flex-1 relative">
+                    <svg id="treeSvg" class="w-full h-full" style="min-height:420px"></svg>
+                    <div id="treeTooltip" class="tree-node-tooltip"></div>
+                    <div class="absolute bottom-2 left-2 flex items-center gap-3 text-[10px] text-zinc-500 font-mono bg-zinc-950/70 px-2 py-1 rounded-md">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>лучший</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-zinc-600"></span>исследован</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500/60"></span>отсечён</span>
+                    </div>
+                </div>
+
+                <div id="tab-lines" class="flex-1 hidden flex-col gap-1 overflow-y-auto" style="max-height:460px"></div>
+            </div>
+
+            <!-- Метрики -->
+            <div class="panel p-3 flex flex-col gap-2">
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-1 mb-1">Метрики поиска</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="metric-card"><div class="metric-label">Глубина</div><div id="mDepth" class="metric-value">—</div></div>
+                    <div class="metric-card"><div class="metric-label">Оценка</div><div id="mScore" class="metric-value">—</div></div>
+                    <div class="metric-card"><div class="metric-label">Узлы</div><div id="mNodes" class="metric-value">—</div></div>
+                    <div class="metric-card"><div class="metric-label">NPS</div><div id="mNps" class="metric-value">—</div></div>
+                    <div class="metric-card"><div class="metric-label">Время</div><div id="mTime" class="metric-value">—</div></div>
+                    <div class="metric-card"><div class="metric-label">Отсечения</div><div id="mPrune" class="metric-value">—</div></div>
+                </div>
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-1 mt-2">Главный вариант</div>
+                <div id="pvLine" class="text-[13px] font-mono text-zinc-300 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-2 min-h-[36px] leading-relaxed"></div>
             </div>
         </div>
 
-        <div class="flex flex-col gap-4 bg-zinc-900/40 p-5 rounded-xl border border-zinc-800/80 h-full max-h-[600px] shadow-xl backdrop-blur-sm">
-            <div class="flex gap-2 w-full">
-                <button onclick="resetGame()" class="flex-1 py-2 bg-white text-zinc-950 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors shadow-sm">
-                    Новая игра
-                </button>
-                <button onclick="undoMove()" class="flex-1 py-2 bg-zinc-800 text-zinc-100 text-sm font-medium rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700">
-                    Ход назад
-                </button>
+        <!-- НИЖНИЙ РЯД: дашборды -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+            <div class="panel p-4 flex flex-col gap-2">
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Оценка по глубинам (текущий поиск)</div>
+                <svg id="depthChart" viewBox="0 0 320 140" class="w-full h-36"></svg>
             </div>
 
-            <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-2 flex items-center justify-between">
-                <span>История ходов</span>
-                <span id="depthInfo" class="text-zinc-600 normal-case font-mono"></span>
+            <div class="panel p-4 flex flex-col gap-2">
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Эволюция оценки за партию</div>
+                <svg id="evolutionChart" viewBox="0 0 320 140" class="w-full h-36"></svg>
             </div>
-            
-            <div id="history" class="flex-1 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start min-h-0"></div>
+
+            <div class="panel p-4 flex flex-col gap-2">
+                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
+                    <span>Heatmap активности фигур</span>
+                    <span class="text-[10px] normal-case text-zinc-600">from + to за партию</span>
+                </div>
+                <svg id="heatmapCanvas" viewBox="0 0 320 140" class="w-full h-36"></svg>
+            </div>
         </div>
+
     </div>
 
     <!-- ВОРКЕР ИИ -->
@@ -113,87 +219,32 @@
         let customWeights = null;
         const engine = new Chess();
 
-        // Тайм-бюджет на ход (мс). Держим с запасом от требуемых 3-4с,
-        // чтобы гарантированно успеть отдать ответ.
         const TIME_BUDGET_MS = 3500;
-        const MAX_DEPTH = 64; // практический потолок, реально ограничено временем
+        const MAX_DEPTH = 64;
+        const PROGRESS_INTERVAL_MS = 220; // несколько раз в секунду
 
-        // ---------- Материальные и позиционные веса ----------
         const DEFAULT_MATERIAL = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
 
-        // Piece-square таблицы (с точки зрения белых, индекс = row*8+col, row 0 = 8-я горизонталь)
         const PST = {
-            p: [
-                0,  0,  0,  0,  0,  0,  0,  0,
-                50, 50, 50, 50, 50, 50, 50, 50,
-                10, 10, 20, 30, 30, 20, 10, 10,
-                5,  5, 10, 25, 25, 10,  5,  5,
-                0,  0,  0, 20, 20,  0,  0,  0,
-                5, -5,-10,  0,  0,-10, -5,  5,
-                5, 10, 10,-20,-20, 10, 10,  5,
-                0,  0,  0,  0,  0,  0,  0,  0
-            ],
-            n: [
-                -50,-40,-30,-30,-30,-30,-40,-50,
-                -40,-20,  0,  0,  0,  0,-20,-40,
-                -30,  0, 10, 15, 15, 10,  0,-30,
-                -30,  5, 15, 20, 20, 15,  5,-30,
-                -30,  0, 15, 20, 20, 15,  0,-30,
-                -30,  5, 10, 15, 15, 10,  5,-30,
-                -40,-20,  0,  5,  5,  0,-20,-40,
-                -50,-40,-30,-30,-30,-30,-40,-50
-            ],
-            b: [
-                -20,-10,-10,-10,-10,-10,-10,-20,
-                -10,  0,  0,  0,  0,  0,  0,-10,
-                -10,  0,  5, 10, 10,  5,  0,-10,
-                -10,  5,  5, 10, 10,  5,  5,-10,
-                -10,  0, 10, 10, 10, 10,  0,-10,
-                -10, 10, 10, 10, 10, 10, 10,-10,
-                -10,  5,  0,  0,  0,  0,  5,-10,
-                -20,-10,-10,-10,-10,-10,-10,-20
-            ],
-            r: [
-                0,  0,  0,  0,  0,  0,  0,  0,
-                5, 10, 10, 10, 10, 10, 10,  5,
-                -5,  0,  0,  0,  0,  0,  0, -5,
-                -5,  0,  0,  0,  0,  0,  0, -5,
-                -5,  0,  0,  0,  0,  0,  0, -5,
-                -5,  0,  0,  0,  0,  0,  0, -5,
-                -5,  0,  0,  0,  0,  0,  0, -5,
-                0,  0,  0,  5,  5,  0,  0,  0
-            ],
-            q: [
-                -20,-10,-10, -5, -5,-10,-10,-20,
-                -10,  0,  0,  0,  0,  0,  0,-10,
-                -10,  0,  5,  5,  5,  5,  0,-10,
-                -5,  0,  5,  5,  5,  5,  0, -5,
-                0,  0,  5,  5,  5,  5,  0, -5,
-                -10,  5,  5,  5,  5,  5,  0,-10,
-                -10,  0,  5,  0,  0,  0,  0,-10,
-                -20,-10,-10, -5, -5,-10,-10,-20
-            ],
-            k: [
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -30,-40,-40,-50,-50,-40,-40,-30,
-                -20,-30,-30,-40,-40,-30,-30,-20,
-                -10,-20,-20,-20,-20,-20,-20,-10,
-                20, 20,  0,  0,  0,  0, 20, 20,
-                20, 30, 10,  0,  0, 10, 30, 20
-            ],
-            // Эндшпильная таблица короля (когда мало материала) — тянем к центру
-            k_end: [
-                -50,-40,-30,-20,-20,-30,-40,-50,
-                -30,-20,-10,  0,  0,-10,-20,-30,
-                -30,-10, 20, 30, 30, 20,-10,-30,
-                -30,-10, 30, 40, 40, 30,-10,-30,
-                -30,-10, 30, 40, 40, 30,-10,-30,
-                -30,-10, 20, 30, 30, 20,-10,-30,
-                -30,-30,  0,  0,  0,  0,-30,-30,
-                -50,-30,-30,-30,-30,-30,-30,-50
-            ]
+            p: [0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5,
+                0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0],
+            n: [-50,-40,-30,-30,-30,-30,-40,-50, -40,-20,0,0,0,0,-20,-40, -30,0,10,15,15,10,0,-30,
+                -30,5,15,20,20,15,5,-30, -30,0,15,20,20,15,0,-30, -30,5,10,15,15,10,5,-30,
+                -40,-20,0,5,5,0,-20,-40, -50,-40,-30,-30,-30,-30,-40,-50],
+            b: [-20,-10,-10,-10,-10,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,10,10,5,0,-10,
+                -10,5,5,10,10,5,5,-10, -10,0,10,10,10,10,0,-10, -10,10,10,10,10,10,10,-10,
+                -10,5,0,0,0,0,5,-10, -20,-10,-10,-10,-10,-10,-10,-20],
+            r: [0,0,0,0,0,0,0,0, 5,10,10,10,10,10,10,5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5,
+                -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, 0,0,0,5,5,0,0,0],
+            q: [-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,5,5,5,0,-10,
+                -5,0,5,5,5,5,0,-5, 0,0,5,5,5,5,0,-5, -10,5,5,5,5,5,0,-10, -10,0,5,0,0,0,0,-10,
+                -20,-10,-10,-5,-5,-10,-10,-20],
+            k: [-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30,
+                -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10,
+                20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20],
+            k_end: [-50,-40,-30,-20,-20,-30,-40,-50, -30,-20,-10,0,0,-10,-20,-30, -30,-10,20,30,30,20,-10,-30,
+                -30,-10,30,40,40,30,-10,-30, -30,-10,30,40,40,30,-10,-30, -30,-10,20,30,30,20,-10,-30,
+                -30,-30,0,0,0,0,-30,-30, -50,-30,-30,-30,-30,-30,-30,-50]
         };
 
         function materialValue(type) {
@@ -201,23 +252,27 @@
             return DEFAULT_MATERIAL[type];
         }
 
-        // Транспозиционная таблица: fen(без счётчиков ходов) -> {depth, score, flag, move}
         let tt = new Map();
         const TT_MAX_SIZE = 200000;
         const TT_EXACT = 0, TT_LOWER = 1, TT_UPPER = 2;
 
         function ttKey(fen) {
-            // Отбрасываем счётчики полуходов/номер хода — они не влияют на оценку позиции
             const parts = fen.split(' ');
             return parts.slice(0, 4).join(' ');
         }
 
         let nodeCount = 0;
+        let pruneCount = 0;
         let deadline = 0;
+        let searchStart = 0;
         let timeUp = false;
+        let lastProgressPost = 0;
+
+        // Снимок дерева на первых 2 уровнях от корня для визуализации
+        let treeRoot = null;
 
         function checkTime() {
-            if ((nodeCount & 1023) === 0) {
+            if ((nodeCount & 511) === 0) {
                 if (performance.now() > deadline) timeUp = true;
             }
         }
@@ -225,11 +280,9 @@
         function totalMaterial() {
             const board = engine.board();
             let total = 0;
-            for (let i = 0; i < 8; i++) {
-                for (let j = 0; j < 8; j++) {
-                    const p = board[i][j];
-                    if (p && p.type !== 'k') total += materialValue(p.type);
-                }
+            for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+                const p = board[i][j];
+                if (p && p.type !== 'k') total += materialValue(p.type);
             }
             return total;
         }
@@ -237,32 +290,24 @@
         function evaluateBoard() {
             const board = engine.board();
             let score = 0;
-            const endgame = totalMaterial() < 2600; // грубый порог перехода в эндшпиль
-
+            const endgame = totalMaterial() < 2600;
             for (let i = 0; i < 8; i++) {
                 for (let j = 0; j < 8; j++) {
                     const piece = board[i][j];
                     if (!piece) continue;
-
                     let val = materialValue(piece.type);
                     let pstTable = piece.type === 'k' && endgame ? PST.k_end : PST[piece.type];
                     let idx = piece.color === 'w' ? (i * 8 + j) : ((7 - i) * 8 + j);
                     let pstVal = pstTable ? pstTable[idx] : 0;
-
                     const total = val + pstVal;
                     score += piece.color === 'w' ? total : -total;
                 }
             }
-
-            // Небольшой бонус за подвижность (мобильность) — считаем дёшево через moves count
             return engine.turn() === 'w' ? score : -score;
         }
 
-        // MVV-LVA + промоции + TT-ход впереди для упорядочивания ходов
         function scoreMove(m, ttMove) {
-            if (ttMove && m.from === ttMove.slice(0,2) && m.to === ttMove.slice(2,4)) {
-                return 100000;
-            }
+            if (ttMove && m.from === ttMove.slice(0,2) && m.to === ttMove.slice(2,4)) return 100000;
             let s = 0;
             if (m.flags.includes('c') || m.flags.includes('e')) {
                 const victim = m.flags.includes('e') ? 100 : materialValue(m.captured);
@@ -274,39 +319,32 @@
         }
 
         function orderMoves(moves, ttMove) {
-            return moves
-                .map(m => ({ m, s: scoreMove(m, ttMove) }))
-                .sort((a, b) => b.s - a.s)
-                .map(x => x.m);
+            return moves.map(m => ({ m, s: scoreMove(m, ttMove) })).sort((a,b) => b.s - a.s).map(x => x.m);
         }
 
-        // Quiescence search: досчитываем взятия, чтобы не спотыкаться на горизонте
         function quiescence(alpha, beta, qdepth) {
             nodeCount++;
             checkTime();
             if (timeUp) return evaluateBoard();
-
             const standPat = evaluateBoard();
             if (standPat >= beta) return beta;
             if (standPat > alpha) alpha = standPat;
             if (qdepth <= 0) return standPat;
-
             const moves = engine.moves({ verbose: true }).filter(m => m.flags.includes('c') || m.flags.includes('e'));
             const ordered = orderMoves(moves, null);
-
             for (let i = 0; i < ordered.length; i++) {
                 engine.move(ordered[i]);
                 const score = -quiescence(-beta, -alpha, qdepth - 1);
                 engine.undo();
-
                 if (timeUp) return alpha;
-                if (score >= beta) return beta;
+                if (score >= beta) { pruneCount++; return beta; }
                 if (score > alpha) alpha = score;
             }
             return alpha;
         }
 
-        function alphaBeta(depth, alpha, beta, ply) {
+        // treeNode: собираем только для верхних 2 уровней (root -> depth1 -> depth2), с ограничением по числу детей
+        function alphaBeta(depth, alpha, beta, ply, treeNode) {
             nodeCount++;
             checkTime();
             if (timeUp) return 0;
@@ -324,58 +362,102 @@
                 }
             }
 
-            if (depth === 0) {
-                return quiescence(alpha, beta, 4);
-            }
+            if (depth === 0) return quiescence(alpha, beta, 4);
 
             const rawMoves = engine.moves({ verbose: true });
-            if (rawMoves.length === 0) {
-                return engine.in_check() ? -99999 + ply : 0;
-            }
+            if (rawMoves.length === 0) return engine.in_check() ? -99999 + ply : 0;
 
             const moves = orderMoves(rawMoves, ttMove);
+            const collectChildren = treeNode && ply <= 2;
+            const maxChildrenToTrack = ply === 1 ? 8 : 5;
 
             let bestScore = -Infinity;
             let bestMove = null;
             const alphaOrig = alpha;
 
             for (let i = 0; i < moves.length; i++) {
+                let childNode = null;
+                if (collectChildren && i < maxChildrenToTrack) {
+                    childNode = { move: moves[i].san, from: moves[i].from, to: moves[i].to, children: [], status: 'searching', score: null };
+                    treeNode.children.push(childNode);
+                }
+
                 engine.move(moves[i]);
-                const score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1);
+                const score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
                 engine.undo();
+
+                if (childNode) { childNode.score = score; childNode.status = 'explored'; }
 
                 if (timeUp) return bestScore === -Infinity ? 0 : bestScore;
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMove = moves[i];
-                }
+                if (score > bestScore) { bestScore = score; bestMove = moves[i]; }
                 if (bestScore > alpha) alpha = bestScore;
-                if (alpha >= beta) break; // отсечение
+                if (alpha >= beta) {
+                    pruneCount++;
+                    if (childNode) childNode.status = 'pruned';
+                    // помечаем оставшиеся ещё не посчитанные как отсечённые
+                    if (collectChildren) {
+                        for (let k = i + 1; k < Math.min(moves.length, maxChildrenToTrack); k++) {
+                            treeNode.children.push({ move: moves[k].san, from: moves[k].from, to: moves[k].to, children: [], status: 'pruned-skip', score: null });
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (treeNode && bestMove) {
+                treeNode.bestChildMove = bestMove.san;
+                for (const c of treeNode.children) c.status = (c.move === bestMove.san && c.status === 'explored') ? 'best' : c.status;
             }
 
             if (!timeUp) {
                 let flag = TT_EXACT;
                 if (bestScore <= alphaOrig) flag = TT_UPPER;
                 else if (bestScore >= beta) flag = TT_LOWER;
-
-                if (tt.size > TT_MAX_SIZE) tt.clear(); // простая защита от разрастания
-                tt.set(key, {
-                    depth,
-                    score: bestScore,
-                    flag,
-                    move: bestMove ? (bestMove.from + bestMove.to + (bestMove.promotion || '')) : null
-                });
+                if (tt.size > TT_MAX_SIZE) tt.clear();
+                tt.set(key, { depth, score: bestScore, flag, move: bestMove ? (bestMove.from + bestMove.to + (bestMove.promotion || '')) : null });
             }
-
             return bestScore;
+        }
+
+        function maybePostProgress(depth, rootLines, forced) {
+            const now = performance.now();
+            if (!forced && now - lastProgressPost < PROGRESS_INTERVAL_MS) return;
+            lastProgressPost = now;
+            const elapsed = now - searchStart;
+            self.postMessage({
+                type: 'PROGRESS',
+                depth,
+                nodes: nodeCount,
+                prunes: pruneCount,
+                elapsedMs: elapsed,
+                nps: elapsed > 0 ? Math.round(nodeCount / (elapsed / 1000)) : 0,
+                rootLines: rootLines.slice(0, 6),
+                tree: treeRoot ? cloneTree(treeRoot) : null
+            });
+        }
+
+        function cloneTree(node) {
+            // ограничиваем глубину клонирования визуализации, чтобы не тормозить постинг
+            return {
+                move: node.move || 'root',
+                score: node.score,
+                status: node.status,
+                children: (node.children || []).slice(0, 8).map(c => ({
+                    move: c.move, score: c.score, status: c.status,
+                    children: (c.children || []).slice(0, 5).map(g => ({ move: g.move, score: g.score, status: g.status, children: [] }))
+                }))
+            };
         }
 
         function searchBestMove(fen, timeBudgetMs) {
             engine.load(fen);
             nodeCount = 0;
+            pruneCount = 0;
             timeUp = false;
-            deadline = performance.now() + timeBudgetMs;
+            searchStart = performance.now();
+            deadline = searchStart + timeBudgetMs;
+            lastProgressPost = 0;
 
             const rootMoves = engine.moves({ verbose: true });
             if (rootMoves.length === 0) return { move: null, depth: 0 };
@@ -387,51 +469,61 @@
             let bestMoveStr = null;
             let lastCompletedDepth = 0;
             let ttMove = null;
+            const depthScoreHistory = [];
 
-            // Iterative deepening: с каждой завершённой итерацией храним лучший ход,
-            // если время истекает в середине поиска — используем предыдущий надёжный результат.
             for (let depth = 1; depth <= MAX_DEPTH; depth++) {
                 let alpha = -Infinity, beta = Infinity;
                 let bestScoreThisDepth = -Infinity;
                 let bestMoveThisDepth = null;
 
+                treeRoot = { move: 'root', score: null, status: 'root', children: [] };
                 const moves = orderMoves(rootMoves, ttMove);
+                const rootLines = [];
 
                 for (let i = 0; i < moves.length; i++) {
+                    let childNode = { move: moves[i].san, from: moves[i].from, to: moves[i].to, children: [], status: 'searching', score: null };
+                    treeRoot.children.push(childNode);
+
                     engine.move(moves[i]);
-                    const score = -alphaBeta(depth - 1, -beta, -alpha, 1);
+                    const score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
                     engine.undo();
+
+                    childNode.score = score;
+                    childNode.status = 'explored';
 
                     if (timeUp) break;
 
-                    if (score > bestScoreThisDepth) {
-                        bestScoreThisDepth = score;
-                        bestMoveThisDepth = moves[i];
-                    }
+                    rootLines.push({ san: moves[i].san, from: moves[i].from, to: moves[i].to, score });
+                    rootLines.sort((a,b) => b.score - a.score);
+
+                    if (score > bestScoreThisDepth) { bestScoreThisDepth = score; bestMoveThisDepth = moves[i]; }
                     if (score > alpha) alpha = score;
+
+                    maybePostProgress(depth, rootLines, false);
                 }
 
-                if (timeUp) break;
+                if (timeUp) { maybePostProgress(depth, rootLines, true); break; }
 
                 if (bestMoveThisDepth) {
+                    for (const c of treeRoot.children) if (c.move === bestMoveThisDepth.san) c.status = 'best';
                     bestMoveStr = bestMoveThisDepth.from + bestMoveThisDepth.to + (bestMoveThisDepth.promotion || '');
                     ttMove = bestMoveStr;
                     lastCompletedDepth = depth;
+                    depthScoreHistory.push({ depth, score: bestScoreThisDepth });
                 }
 
-                // Если время уже почти вышло — не начинаем следующую (заведомо более дорогую) итерацию
+                maybePostProgress(depth, rootLines, true);
+
                 if (performance.now() > deadline - 30) break;
-                // Нашли форсированный мат — нет смысла копать глубже
                 if (bestScoreThisDepth > 90000) break;
             }
 
             if (!bestMoveStr) {
-                // Подстраховка на случай, если не успели закончить даже depth=1
                 const m = rootMoves[0];
                 bestMoveStr = m.from + m.to + (m.promotion || '');
             }
 
-            return { move: bestMoveStr, depth: lastCompletedDepth };
+            return { move: bestMoveStr, depth: lastCompletedDepth, depthHistory: depthScoreHistory };
         }
 
         self.onmessage = async function(e) {
@@ -450,7 +542,15 @@
 
             if (type === 'SEARCH') {
                 const result = searchBestMove(fen, TIME_BUDGET_MS);
-                self.postMessage({ type: 'BEST_MOVE', move: result.move, depth: result.depth, nodes: nodeCount });
+                self.postMessage({
+                    type: 'BEST_MOVE',
+                    move: result.move,
+                    depth: result.depth,
+                    nodes: nodeCount,
+                    prunes: pruneCount,
+                    elapsedMs: performance.now() - searchStart,
+                    depthHistory: result.depthHistory || []
+                });
             }
         };
     </script>
@@ -460,53 +560,362 @@
         const game = new Chess();
         const statusEl = document.getElementById('status');
         const historyEl = document.getElementById('history');
-        const depthInfoEl = document.getElementById('depthInfo');
+        const searchInfoEl = document.getElementById('searchInfo');
+        const pvLineEl = document.getElementById('pvLine');
         let selectedSquare = null;
 
+        // ---- Метрики DOM ----
+        const mDepth = document.getElementById('mDepth');
+        const mScore = document.getElementById('mScore');
+        const mNodes = document.getElementById('mNodes');
+        const mNps = document.getElementById('mNps');
+        const mTime = document.getElementById('mTime');
+        const mPrune = document.getElementById('mPrune');
+
+        // ---- Состояние для дашбордов ----
+        let evolutionHistory = []; // { ply, score } по партии, score с точки зрения белых
+        let squareActivity = {};   // 'e4' -> count
+        for (let f = 0; f < 8; f++) for (let r = 0; r < 8; r++) {
+            squareActivity['abcdefgh'[f] + (r+1)] = 0;
+        }
+        let currentDepthHistory = [];
+
+        function fmtScore(cp) {
+            if (cp == null) return '—';
+            if (Math.abs(cp) > 90000) {
+                const mateIn = Math.ceil((99999 - Math.abs(cp)) / 1) ;
+                return (cp > 0 ? '+M' : '-M') + Math.max(1, Math.round(mateIn/100));
+            }
+            const pawns = cp / 100;
+            return (pawns > 0 ? '+' : '') + pawns.toFixed(2);
+        }
+
+        // ---------------- Tabs ----------------
+        window.switchTab = function(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+            document.getElementById('tab-tree').classList.toggle('hidden', tab !== 'tree');
+            document.getElementById('tab-tree').classList.toggle('flex', tab === 'tree');
+            document.getElementById('tab-lines').classList.toggle('hidden', tab !== 'lines');
+            document.getElementById('tab-lines').classList.toggle('flex', tab === 'lines');
+        };
+
+        // ---------------- Дерево поиска (SVG) ----------------
+        const treeSvg = document.getElementById('treeSvg');
+        const treeTooltip = document.getElementById('treeTooltip');
+        const NS = 'http://www.w3.org/2000/svg';
+
+        function statusColor(status) {
+            switch (status) {
+                case 'best': return '#10b981';
+                case 'pruned': case 'pruned-skip': return 'rgba(239,68,68,0.55)';
+                case 'searching': return '#f59e0b';
+                case 'root': return '#71717a';
+                default: return '#52525b';
+            }
+        }
+
+        function renderTree(tree) {
+            treeSvg.innerHTML = '';
+            if (!tree) return;
+
+            const width = treeSvg.clientWidth || 600;
+            const height = Math.max(treeSvg.clientHeight || 420, 420);
+            treeSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            const levels = [[tree]];
+            if (tree.children && tree.children.length) levels.push(tree.children);
+            let level2 = [];
+            for (const c of (tree.children || [])) {
+                for (const g of (c.children || [])) level2.push({ node: g, parent: c });
+            }
+            if (level2.length) levels.push(level2.map(x => x.node));
+
+            const levelY = [40, height * 0.48, height - 30];
+            const positions = new Map(); // node -> {x,y}
+
+            // root
+            positions.set(tree, { x: width/2, y: levelY[0] });
+
+            // level 1
+            const l1 = tree.children || [];
+            const l1Width = width - 60;
+            l1.forEach((c, i) => {
+                const x = l1.length === 1 ? width/2 : 30 + (l1Width * i / (l1.length - 1));
+                positions.set(c, { x, y: levelY[1] });
+            });
+
+            // level 2 grouped under each parent
+            l1.forEach((c) => {
+                const kids = c.children || [];
+                const parentPos = positions.get(c);
+                const span = Math.min(140, (width / Math.max(l1.length,1)) - 10);
+                kids.forEach((g, i) => {
+                    const x = kids.length === 1 ? parentPos.x : parentPos.x - span/2 + (span * i / (kids.length - 1));
+                    positions.set(g, { x, y: levelY[2] });
+                });
+            });
+
+            function drawEdge(p1, p2, status) {
+                const line = document.createElementNS(NS, 'line');
+                line.setAttribute('x1', p1.x); line.setAttribute('y1', p1.y + 10);
+                line.setAttribute('x2', p2.x); line.setAttribute('y2', p2.y - 10);
+                line.setAttribute('stroke', status === 'pruned' || status === 'pruned-skip' ? 'rgba(239,68,68,0.25)' : 'rgba(113,113,122,0.35)');
+                line.setAttribute('stroke-width', '1.5');
+                treeSvg.appendChild(line);
+            }
+
+            function drawNode(node, pos, r) {
+                const g = document.createElementNS(NS, 'g');
+                g.style.cursor = 'pointer';
+
+                const circle = document.createElementNS(NS, 'circle');
+                circle.setAttribute('cx', pos.x);
+                circle.setAttribute('cy', pos.y);
+                circle.setAttribute('r', r);
+                circle.setAttribute('fill', statusColor(node.status));
+                circle.setAttribute('stroke', '#09090b');
+                circle.setAttribute('stroke-width', '1');
+                if (node.status === 'best') circle.setAttribute('filter', 'drop-shadow(0 0 4px rgba(16,185,129,0.8))');
+                g.appendChild(circle);
+
+                if (node.move && node.move !== 'root') {
+                    const label = document.createElementNS(NS, 'text');
+                    label.setAttribute('x', pos.x);
+                    label.setAttribute('y', pos.y + r + 12);
+                    label.setAttribute('text-anchor', 'middle');
+                    label.setAttribute('font-size', '9');
+                    label.setAttribute('font-family', 'ui-monospace, monospace');
+                    label.setAttribute('fill', node.status === 'best' ? '#a7f3d0' : '#a1a1aa');
+                    label.textContent = node.move;
+                    g.appendChild(label);
+                }
+
+                g.addEventListener('mousemove', (ev) => {
+                    treeTooltip.style.display = 'block';
+                    treeTooltip.style.left = (ev.offsetX + 14) + 'px';
+                    treeTooltip.style.top = (ev.offsetY + 4) + 'px';
+                    const scoreTxt = node.score != null ? fmtScore(node.score) : '...';
+                    treeTooltip.innerHTML = `<b>${node.move || 'root'}</b> · ${scoreTxt} · ${node.status || ''}`;
+                });
+                g.addEventListener('mouseleave', () => { treeTooltip.style.display = 'none'; });
+
+                treeSvg.appendChild(g);
+            }
+
+            // edges first (behind nodes)
+            l1.forEach(c => drawEdge(positions.get(tree), positions.get(c), c.status));
+            l1.forEach(c => (c.children || []).forEach(g => drawEdge(positions.get(c), positions.get(g), g.status)));
+
+            drawNode(tree, positions.get(tree), 9);
+            l1.forEach(c => drawNode(c, positions.get(c), 7));
+            l1.forEach(c => (c.children || []).forEach(g => drawNode(g, positions.get(g), 4.5)));
+        }
+
+        // ---------------- Топ-линии панель ----------------
+        function renderTopLines(lines) {
+            const el = document.getElementById('tab-lines');
+            if (!lines || lines.length === 0) { el.innerHTML = '<div class="text-zinc-600 text-xs p-2">Пока нет данных...</div>'; return; }
+            el.innerHTML = lines.map((l, i) => {
+                const barWidth = Math.max(4, Math.min(100, 50 + l.score / 20));
+                return `<div class="pv-row">
+                    <span class="text-zinc-600 w-4 text-right">${i+1}</span>
+                    <span class="font-mono text-zinc-200 w-16">${l.san}</span>
+                    <span class="font-mono ${l.score >= 0 ? 'text-emerald-400' : 'text-red-400'} w-14">${fmtScore(l.score)}</span>
+                    <div class="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div class="h-full ${l.score >= 0 ? 'bg-emerald-500' : 'bg-red-500'}" style="width:${barWidth}%"></div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ---------------- Графики (SVG line charts) ----------------
+        function drawLineChart(svgId, points, opts) {
+            const svg = document.getElementById(svgId);
+            svg.innerHTML = '';
+            if (!points || points.length === 0) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', 160); t.setAttribute('y', 70);
+                t.setAttribute('text-anchor', 'middle');
+                t.setAttribute('font-size', '10'); t.setAttribute('fill', '#52525b');
+                t.textContent = 'Нет данных';
+                svg.appendChild(t);
+                return;
+            }
+            const W = 320, H = 140, padL = 28, padR = 10, padT = 10, padB = 20;
+            const xs = points.map((_, i) => i);
+            const ys = points.map(p => p.value);
+            const minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0);
+            const rangeY = (maxY - minY) || 1;
+
+            function xPos(i) { return padL + (points.length === 1 ? 0 : (W - padL - padR) * i / (points.length - 1)); }
+            function yPos(v) { return H - padB - ((v - minY) / rangeY) * (H - padT - padB); }
+
+            // zero line
+            const zeroY = yPos(0);
+            const zeroLine = document.createElementNS(NS, 'line');
+            zeroLine.setAttribute('x1', padL); zeroLine.setAttribute('x2', W - padR);
+            zeroLine.setAttribute('y1', zeroY); zeroLine.setAttribute('y2', zeroY);
+            zeroLine.setAttribute('stroke', '#3f3f46'); zeroLine.setAttribute('stroke-dasharray', '2,2');
+            svg.appendChild(zeroLine);
+
+            // area fill
+            let areaPath = `M ${xPos(0)} ${zeroY} `;
+            points.forEach((p, i) => areaPath += `L ${xPos(i)} ${yPos(p.value)} `);
+            areaPath += `L ${xPos(points.length-1)} ${zeroY} Z`;
+            const area = document.createElementNS(NS, 'path');
+            area.setAttribute('d', areaPath);
+            area.setAttribute('fill', opts.color || '#10b981');
+            area.setAttribute('opacity', '0.12');
+            svg.appendChild(area);
+
+            // line
+            let linePath = '';
+            points.forEach((p, i) => { linePath += (i === 0 ? 'M' : 'L') + ` ${xPos(i)} ${yPos(p.value)} `; });
+            const line = document.createElementNS(NS, 'path');
+            line.setAttribute('d', linePath);
+            line.setAttribute('fill', 'none');
+            line.setAttribute('stroke', opts.color || '#10b981');
+            line.setAttribute('stroke-width', '2');
+            line.setAttribute('stroke-linejoin', 'round');
+            line.setAttribute('stroke-linecap', 'round');
+            svg.appendChild(line);
+
+            // points
+            points.forEach((p, i) => {
+                const c = document.createElementNS(NS, 'circle');
+                c.setAttribute('cx', xPos(i)); c.setAttribute('cy', yPos(p.value));
+                c.setAttribute('r', points.length > 30 ? 1.5 : 2.5);
+                c.setAttribute('fill', opts.color || '#10b981');
+                svg.appendChild(c);
+            });
+
+            // y-axis labels (min/max)
+            [maxY, minY].forEach(v => {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', 2); t.setAttribute('y', yPos(v) + 3);
+                t.setAttribute('font-size', '8'); t.setAttribute('fill', '#71717a');
+                t.setAttribute('font-family', 'ui-monospace, monospace');
+                t.textContent = (v/100).toFixed(1);
+                svg.appendChild(t);
+            });
+
+            // x label
+            if (opts.xLabel) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', W/2); t.setAttribute('y', H - 4);
+                t.setAttribute('text-anchor', 'middle');
+                t.setAttribute('font-size', '8'); t.setAttribute('fill', '#52525b');
+                t.textContent = opts.xLabel;
+                svg.appendChild(t);
+            }
+        }
+
+        function renderDepthChart() {
+            drawLineChart('depthChart', currentDepthHistory.map(d => ({ value: d.score })), { color: '#3b82f6', xLabel: 'глубина →' });
+        }
+        function renderEvolutionChart() {
+            drawLineChart('evolutionChart', evolutionHistory.map(e => ({ value: e.score })), { color: '#a855f7', xLabel: 'ход →' });
+        }
+
+        // ---------------- Heatmap ----------------
+        function renderHeatmap() {
+            const svg = document.getElementById('heatmapCanvas');
+            svg.innerHTML = '';
+            const W = 320, H = 140;
+            const cell = Math.min((W - 20) / 8, (H - 20) / 8);
+            const startX = (W - cell*8) / 2, startY = (H - cell*8) / 2;
+            const maxVal = Math.max(1, ...Object.values(squareActivity));
+
+            for (let r = 0; r < 8; r++) {
+                for (let f = 0; f < 8; f++) {
+                    const sq = 'abcdefgh'[f] + (8 - r);
+                    const val = squareActivity[sq] || 0;
+                    const intensity = val / maxVal;
+                    const rect = document.createElementNS(NS, 'rect');
+                    rect.setAttribute('x', startX + f*cell);
+                    rect.setAttribute('y', startY + r*cell);
+                    rect.setAttribute('width', cell - 1);
+                    rect.setAttribute('height', cell - 1);
+                    const alpha = 0.08 + intensity * 0.82;
+                    rect.setAttribute('fill', `rgba(249, 115, 22, ${alpha.toFixed(2)})`);
+                    svg.appendChild(rect);
+                }
+            }
+        }
+
+        // ---------------- Worker wiring ----------------
         const workerCode = document.getElementById('worker-code').textContent;
         const blob = new Blob([workerCode], { type: 'application/javascript' });
         const engineWorker = new Worker(URL.createObjectURL(blob));
 
         engineWorker.onmessage = function(e) {
-            const { type, msg, move, depth, nodes } = e.data;
+            const data = e.data;
 
-            if (type === 'READY') {
-                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span>${msg}`;
-            } else if (type === 'BEST_MOVE') {
-                // Если ход пришел, но мы уже отменили свой (наш ход) - игнорируем ответ бота
+            if (data.type === 'READY') {
+                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span>${data.msg}`;
+            }
+
+            else if (data.type === 'PROGRESS') {
+                mDepth.textContent = data.depth;
+                mNodes.textContent = data.nodes.toLocaleString('ru');
+                mNps.textContent = data.nps.toLocaleString('ru');
+                mTime.textContent = (data.elapsedMs/1000).toFixed(1) + 's';
+                mPrune.textContent = data.prunes.toLocaleString('ru');
+                if (data.rootLines && data.rootLines.length) {
+                    mScore.textContent = fmtScore(data.rootLines[0].score);
+                    searchInfoEl.textContent = `лучший: ${data.rootLines[0].san}`;
+                    renderTopLines(data.rootLines);
+                    pvLineEl.textContent = data.rootLines[0].san + (data.rootLines[0].score != null ? '  (' + fmtScore(data.rootLines[0].score) + ')' : '');
+                }
+                if (data.tree) renderTree(data.tree);
+            }
+
+            else if (data.type === 'BEST_MOVE') {
                 if (game.turn() === 'w') return;
 
-                if (depth) {
-                    depthInfoEl.textContent = `глубина ${depth}${nodes ? ' · ' + nodes.toLocaleString('ru') + ' узлов' : ''}`;
+                if (data.depthHistory && data.depthHistory.length) {
+                    currentDepthHistory = data.depthHistory;
+                    renderDepthChart();
                 }
 
-                if (move) {
-                    game.move({ from: move.substring(0, 2), to: move.substring(2, 4), promotion: move.charAt(4) || 'q' });
+                if (data.move) {
+                    const from = data.move.substring(0,2), to = data.move.substring(2,4);
+                    game.move({ from, to, promotion: data.move.charAt(4) || 'q' });
+                    squareActivity[from] = (squareActivity[from]||0) + 1;
+                    squareActivity[to] = (squareActivity[to]||0) + 2;
                     board.position(game.fen());
                     updateUI();
+                    recordEvolution();
+                    renderHeatmap();
                 }
             }
         };
 
         engineWorker.postMessage({ type: 'INIT' });
 
+        function recordEvolution() {
+            // оцениваем позицию материально+позиционно с точки зрения белых, для графика партии
+            const b = game.board();
+            const DEFAULT_MATERIAL = { p:100,n:320,b:330,r:500,q:900,k:0 };
+            let score = 0;
+            for (const row of b) for (const p of row) if (p) score += (p.color === 'w' ? 1 : -1) * DEFAULT_MATERIAL[p.type];
+            evolutionHistory.push({ ply: evolutionHistory.length + 1, score });
+            renderEvolutionChart();
+        }
+
         function updateUI() {
             const history = game.history();
             let html = '';
             for (let i = 0; i < history.length; i += 2) {
                 html += `<div class="text-zinc-500 flex justify-between"><span class="text-zinc-600">${Math.floor(i/2) + 1}.</span> <span class="text-zinc-200">${history[i]}</span></div>`;
-                if (history[i+1]) {
-                    html += `<div class="text-right text-zinc-400">${history[i+1]}</div>`;
-                } else {
-                    html += `<div></div>`;
-                }
+                html += history[i+1] ? `<div class="text-right text-zinc-400">${history[i+1]}</div>` : `<div></div>`;
             }
             historyEl.innerHTML = html;
             historyEl.scrollTop = historyEl.scrollHeight;
 
             if (game.game_over()) {
-                statusEl.innerHTML = game.in_checkmate() ? 
-                    '<span class="w-2 h-2 rounded-full bg-red-500"></span>Мат!' : 
+                statusEl.innerHTML = game.in_checkmate() ?
+                    '<span class="w-2 h-2 rounded-full bg-red-500"></span>Мат!' :
                     '<span class="w-2 h-2 rounded-full bg-zinc-500"></span>Ничья';
             } else {
                 statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500"></span>Ваш ход';
@@ -516,77 +925,57 @@
         function showHighlights(square) {
             clearHighlights();
             $('#board .square-' + square).addClass('highlight-selected');
-            
             const moves = game.moves({ square: square, verbose: true });
             moves.forEach(m => {
                 const sqEl = $('#board .square-' + m.to);
-                if (m.flags.includes('c') || m.flags.includes('e')) {
-                    sqEl.addClass('highlight-capture');
-                } else {
-                    sqEl.addClass('highlight-move');
-                }
+                if (m.flags.includes('c') || m.flags.includes('e')) sqEl.addClass('highlight-capture');
+                else sqEl.addClass('highlight-move');
             });
         }
-
         function clearHighlights() {
             $('#board .square-55d63').removeClass('highlight-move highlight-capture highlight-selected');
         }
 
-        // --- ЛОГИКА ДЛЯ ПЕРЕТЯГИВАНИЯ ---
         function onDragStart(source, piece) {
             if (game.game_over() || piece.search(/^b/) !== -1 || game.turn() === 'b') return false;
             selectedSquare = source;
             showHighlights(source);
         }
-
         function onDrop(source, target) {
             clearHighlights();
             selectedSquare = null;
-            
             const move = game.move({ from: source, to: target, promotion: 'q' });
             if (move === null) return 'snapback';
-            
+            squareActivity[source] = (squareActivity[source]||0)+1;
+            squareActivity[target] = (squareActivity[target]||0)+2;
             updateUI();
+            recordEvolution();
+            renderHeatmap();
             triggerEngine();
         }
+        function onSnapEnd() { board.position(game.fen()); }
 
-        function onSnapEnd() {
-            board.position(game.fen());
-        }
-
-        // --- ЛОГИКА ДЛЯ КЛИКОВ ---
         $('#board').on('click', '.square-55d63', function() {
             if (game.game_over() || game.turn() === 'b') return;
-            
             const square = $(this).attr('data-square');
             const piece = game.get(square);
-            
-            // Клик по уже выбранной фигуре - отмена выделения
-            if (selectedSquare === square) {
-                selectedSquare = null;
-                clearHighlights();
-                return;
-            }
 
-            // Выбор другой своей фигуры
-            if (piece && piece.color === 'w') {
-                selectedSquare = square;
-                showHighlights(square);
-                return;
-            }
+            if (selectedSquare === square) { selectedSquare = null; clearHighlights(); return; }
+            if (piece && piece.color === 'w') { selectedSquare = square; showHighlights(square); return; }
 
-            // Попытка сходить выбранной фигурой на пустую клетку или фигуру врага
             if (selectedSquare) {
                 const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
-
                 if (move !== null) {
-                    board.position(game.fen()); // Анимация хода
+                    squareActivity[selectedSquare] = (squareActivity[selectedSquare]||0)+1;
+                    squareActivity[square] = (squareActivity[square]||0)+2;
+                    board.position(game.fen());
                     selectedSquare = null;
                     clearHighlights();
                     updateUI();
+                    recordEvolution();
+                    renderHeatmap();
                     triggerEngine();
                 } else {
-                    // Клик мимо - сбрасываем выделение
                     selectedSquare = null;
                     clearHighlights();
                 }
@@ -596,33 +985,33 @@
         function triggerEngine() {
             if (!game.game_over()) {
                 statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>Думает...';
-                depthInfoEl.textContent = '';
+                searchInfoEl.textContent = '';
                 engineWorker.postMessage({ type: 'SEARCH', fen: game.fen() });
             }
         }
 
-        // --- УПРАВЛЕНИЕ ---
         window.resetGame = function() {
             game.reset();
             board.start();
             selectedSquare = null;
             clearHighlights();
-            depthInfoEl.textContent = '';
+            evolutionHistory = [];
+            for (const k in squareActivity) squareActivity[k] = 0;
+            currentDepthHistory = [];
+            renderEvolutionChart();
+            renderDepthChart();
+            renderHeatmap();
+            renderTopLines([]);
+            pvLineEl.textContent = '';
+            searchInfoEl.textContent = '';
+            mDepth.textContent = mScore.textContent = mNodes.textContent = mNps.textContent = mTime.textContent = mPrune.textContent = '—';
             updateUI();
         };
 
         window.undoMove = function() {
             if (game.history().length === 0) return;
-            
-            // Если бот думает (ход черных) - отменяем только 1 наш ход
-            if (game.turn() === 'b') {
-                game.undo();
-            } else {
-                // Если сейчас наш ход (бот уже ответил) - отменяем ход бота и наш (2 хода)
-                game.undo();
-                game.undo();
-            }
-            
+            if (game.turn() === 'b') { game.undo(); }
+            else { game.undo(); game.undo(); }
             board.position(game.fen());
             selectedSquare = null;
             clearHighlights();
@@ -639,6 +1028,13 @@
             onSnapEnd: onSnapEnd,
             pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
         });
+
+        // init empty charts
+        renderEvolutionChart();
+        renderDepthChart();
+        renderHeatmap();
+        renderTopLines([]);
+        window.addEventListener('resize', () => { if (window.__lastTree) renderTree(window.__lastTree); });
     </script>
 </body>
 </html>
