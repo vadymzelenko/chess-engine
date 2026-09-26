@@ -114,16 +114,66 @@
         #treeCanvas, #evolutionChart, #depthChart, #heatmapCanvas { display:block; width:100%; }
 
         .glow-dot { box-shadow: 0 0 8px currentColor; }
+
+        /* ---- Закрываемые панели ---- */
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .panel-close-btn {
+            width: 22px; height: 22px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 6px;
+            color: #52525b;
+            flex-shrink: 0;
+            transition: all .12s;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+        }
+        .panel-close-btn:hover { background: rgba(239,68,68,0.15); color: #f87171; }
+        .panel-close-btn svg { width: 13px; height: 13px; }
+
+        .widget-slot { transition: opacity .15s, transform .15s; }
+        .widget-slot.hidden-widget { display: none !important; }
+
+        #restoreBar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        #restoreBar:empty { display: none; }
+        .restore-chip {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 10px 5px 12px;
+            background: rgba(24,24,27,0.7);
+            border: 1px dashed #3f3f46;
+            border-radius: 999px;
+            font-size: 11px;
+            color: #a1a1aa;
+            cursor: pointer;
+            transition: all .12s;
+        }
+        .restore-chip:hover { border-color: #52525b; color: #e4e4e7; background: rgba(39,39,42,0.8); }
+        .restore-chip svg { width: 11px; height: 11px; opacity: .7; }
+
+        .chart-axis-label { font-size: 8.5px; fill: #71717a; font-family: ui-monospace, monospace; }
+        .chart-grid-line { stroke: #27272a; stroke-width: 1; }
     </style>
 </head>
 <body class="text-zinc-200 min-h-screen overflow-y-auto flex flex-col items-center p-4 md:p-6 gap-4">
 
     <div class="w-full max-w-[1500px] flex flex-col gap-4">
 
+        <!-- Панель восстановления скрытых виджетов -->
+        <div id="restoreBar"></div>
+
         <!-- ВЕРХНИЙ РЯД: доска + топ-линии + метрики -->
         <div class="grid grid-cols-1 lg:grid-cols-[auto_1fr_280px] gap-4 items-start">
 
-            <!-- Доска -->
+            <!-- Доска (всегда видна, без крестика) -->
             <div class="flex flex-col gap-3 w-full max-w-[420px] mx-auto lg:mx-0">
                 <div class="flex justify-between items-end px-1">
                     <h1 class="text-xl font-semibold tracking-tight text-white">Custom Engine</h1>
@@ -150,13 +200,18 @@
             </div>
 
             <!-- Топ-линии + дерево -->
-            <div class="panel p-4 flex flex-col gap-3 min-h-[500px]">
-                <div class="flex items-center justify-between">
+            <div id="widget-search" class="widget-slot panel p-4 flex flex-col gap-3 min-h-[500px]">
+                <div class="panel-header">
                     <div class="flex gap-1">
                         <button class="tab-btn active" data-tab="tree" onclick="switchTab('tree')">Дерево поиска</button>
                         <button class="tab-btn" data-tab="lines" onclick="switchTab('lines')">Топ-линии</button>
                     </div>
-                    <span id="searchInfo" class="text-[11px] font-mono text-zinc-600"></span>
+                    <div class="flex items-center gap-2">
+                        <span id="searchInfo" class="text-[11px] font-mono text-zinc-600"></span>
+                        <button class="panel-close-btn" onclick="closeWidget('widget-search', 'Дерево + линии')" title="Скрыть">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                        </button>
+                    </div>
                 </div>
 
                 <div id="tab-tree" class="flex-1 relative">
@@ -173,8 +228,13 @@
             </div>
 
             <!-- Метрики -->
-            <div class="panel p-3 flex flex-col gap-2">
-                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-1 mb-1">Метрики поиска</div>
+            <div id="widget-metrics" class="widget-slot panel p-3 flex flex-col gap-2">
+                <div class="panel-header px-1 mb-1">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Метрики поиска</div>
+                    <button class="panel-close-btn" onclick="closeWidget('widget-metrics', 'Метрики поиска')" title="Скрыть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
                 <div class="grid grid-cols-2 gap-2">
                     <div class="metric-card"><div class="metric-label">Глубина</div><div id="mDepth" class="metric-value">—</div></div>
                     <div class="metric-card"><div class="metric-label">Оценка</div><div id="mScore" class="metric-value">—</div></div>
@@ -189,24 +249,39 @@
         </div>
 
         <!-- НИЖНИЙ РЯД: дашборды -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div id="dashboardRow" class="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-            <div class="panel p-4 flex flex-col gap-2">
-                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Оценка по глубинам (текущий поиск)</div>
-                <svg id="depthChart" viewBox="0 0 320 140" class="w-full h-36"></svg>
-            </div>
-
-            <div class="panel p-4 flex flex-col gap-2">
-                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Эволюция оценки за партию</div>
-                <svg id="evolutionChart" viewBox="0 0 320 140" class="w-full h-36"></svg>
-            </div>
-
-            <div class="panel p-4 flex flex-col gap-2">
-                <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
-                    <span>Heatmap активности фигур</span>
-                    <span class="text-[10px] normal-case text-zinc-600">from + to за партию</span>
+            <div id="widget-depthchart" class="widget-slot panel p-4 flex flex-col gap-2">
+                <div class="panel-header">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Оценка по глубинам</div>
+                    <button class="panel-close-btn" onclick="closeWidget('widget-depthchart', 'Оценка по глубинам')" title="Скрыть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
                 </div>
-                <svg id="heatmapCanvas" viewBox="0 0 320 140" class="w-full h-36"></svg>
+                <svg id="depthChart" viewBox="0 0 320 160" class="w-full h-40"></svg>
+            </div>
+
+            <div id="widget-evolchart" class="widget-slot panel p-4 flex flex-col gap-2">
+                <div class="panel-header">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Эволюция оценки за партию</div>
+                    <button class="panel-close-btn" onclick="closeWidget('widget-evolchart', 'Эволюция оценки')" title="Скрыть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <svg id="evolutionChart" viewBox="0 0 320 160" class="w-full h-40"></svg>
+            </div>
+
+            <div id="widget-heatmap" class="widget-slot panel p-4 flex flex-col gap-2">
+                <div class="panel-header">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+                        <span>Heatmap фигур</span>
+                        <span class="text-[10px] normal-case text-zinc-600">from + to</span>
+                    </div>
+                    <button class="panel-close-btn" onclick="closeWidget('widget-heatmap', 'Heatmap фигур')" title="Скрыть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <svg id="heatmapCanvas" viewBox="0 0 320 160" class="w-full h-40"></svg>
             </div>
         </div>
 
@@ -629,6 +704,43 @@
             document.getElementById('tab-lines').classList.toggle('flex', tab === 'lines');
         };
 
+        // ---------------- Закрытие / восстановление виджетов ----------------
+        const restoreBar = document.getElementById('restoreBar');
+        const closedWidgets = new Map(); // id -> label
+
+        window.closeWidget = function(id, label) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.add('hidden-widget');
+            closedWidgets.set(id, label);
+            renderRestoreBar();
+        };
+
+        window.restoreWidget = function(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.remove('hidden-widget');
+            closedWidgets.delete(id);
+            renderRestoreBar();
+            // после восстановления перерисовать графики/дерево, т.к. размеры SVG могли не считаться пока панель была скрыта
+            if (id === 'widget-depthchart') renderDepthChart();
+            if (id === 'widget-evolchart') renderEvolutionChart();
+            if (id === 'widget-heatmap') renderHeatmap();
+            if (id === 'widget-search' && window.__lastTree) renderTree(window.__lastTree);
+        };
+
+        function renderRestoreBar() {
+            if (closedWidgets.size === 0) { restoreBar.innerHTML = ''; return; }
+            let html = '';
+            for (const [id, label] of closedWidgets) {
+                html += `<button class="restore-chip" onclick="restoreWidget('${id}')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    ${label}
+                </button>`;
+            }
+            restoreBar.innerHTML = html;
+        }
+
         // ---------------- Дерево поиска (SVG) ----------------
         const treeSvg = document.getElementById('treeSvg');
         const treeTooltip = document.getElementById('treeTooltip');
@@ -758,47 +870,100 @@
             }).join('');
         }
 
-        // ---------------- Графики (SVG line charts) ----------------
+        // ---------------- Графики (SVG line charts, с нормальными осями) ----------------
+        function niceStep(range, targetTicks) {
+            if (range <= 0) return 1;
+            const rough = range / targetTicks;
+            const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+            const norm = rough / mag;
+            let step;
+            if (norm < 1.5) step = 1;
+            else if (norm < 3) step = 2;
+            else if (norm < 7) step = 5;
+            else step = 10;
+            return step * mag;
+        }
+
         function drawLineChart(svgId, points, opts) {
             const svg = document.getElementById(svgId);
             svg.innerHTML = '';
+            const W = 320, H = 160, padL = 34, padR = 12, padT = 12, padB = 26;
+
             if (!points || points.length === 0) {
                 const t = document.createElementNS(NS, 'text');
-                t.setAttribute('x', 160); t.setAttribute('y', 70);
+                t.setAttribute('x', W/2); t.setAttribute('y', H/2);
                 t.setAttribute('text-anchor', 'middle');
                 t.setAttribute('font-size', '10'); t.setAttribute('fill', '#52525b');
-                t.textContent = 'Нет данных';
+                t.textContent = 'Нет данных пока';
                 svg.appendChild(t);
                 return;
             }
-            const W = 320, H = 140, padL = 28, padR = 10, padT = 10, padB = 20;
-            const xs = points.map((_, i) => i);
+
             const ys = points.map(p => p.value);
-            const minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0);
-            const rangeY = (maxY - minY) || 1;
+            let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0);
+            if (minY === maxY) { minY -= 50; maxY += 50; }
+            // добавляем запас сверху/снизу, чтобы линия не упиралась в край
+            const pad = (maxY - minY) * 0.12;
+            minY -= pad; maxY += pad;
+            const rangeY = maxY - minY;
 
-            function xPos(i) { return padL + (points.length === 1 ? 0 : (W - padL - padR) * i / (points.length - 1)); }
-            function yPos(v) { return H - padB - ((v - minY) / rangeY) * (H - padT - padB); }
+            const plotW = W - padL - padR, plotH = H - padT - padB;
+            function xPos(i) { return padL + (points.length === 1 ? plotW/2 : plotW * i / (points.length - 1)); }
+            function yPos(v) { return padT + plotH - ((v - minY) / rangeY) * plotH; }
 
-            // zero line
-            const zeroY = yPos(0);
-            const zeroLine = document.createElementNS(NS, 'line');
-            zeroLine.setAttribute('x1', padL); zeroLine.setAttribute('x2', W - padR);
-            zeroLine.setAttribute('y1', zeroY); zeroLine.setAttribute('y2', zeroY);
-            zeroLine.setAttribute('stroke', '#3f3f46'); zeroLine.setAttribute('stroke-dasharray', '2,2');
-            svg.appendChild(zeroLine);
+            // --- горизонтальная сетка с "красивыми" шагами по Y (в пешках) ---
+            const stepCp = niceStep(rangeY, 4);
+            const firstTick = Math.ceil(minY / stepCp) * stepCp;
+            for (let v = firstTick; v <= maxY; v += stepCp) {
+                const y = yPos(v);
+                const gridLine = document.createElementNS(NS, 'line');
+                gridLine.setAttribute('x1', padL); gridLine.setAttribute('x2', W - padR);
+                gridLine.setAttribute('y1', y); gridLine.setAttribute('y2', y);
+                gridLine.setAttribute('class', 'chart-grid-line');
+                svg.appendChild(gridLine);
 
-            // area fill
-            let areaPath = `M ${xPos(0)} ${zeroY} `;
+                const label = document.createElementNS(NS, 'text');
+                label.setAttribute('x', padL - 5); label.setAttribute('y', y + 3);
+                label.setAttribute('text-anchor', 'end');
+                label.setAttribute('class', 'chart-axis-label');
+                label.textContent = (v/100 > 0 ? '+' : '') + (v/100).toFixed(1);
+                svg.appendChild(label);
+            }
+
+            // --- нулевая линия (акцентная, если 0 в диапазоне) ---
+            if (minY < 0 && maxY > 0) {
+                const zeroY = yPos(0);
+                const zeroLine = document.createElementNS(NS, 'line');
+                zeroLine.setAttribute('x1', padL); zeroLine.setAttribute('x2', W - padR);
+                zeroLine.setAttribute('y1', zeroY); zeroLine.setAttribute('y2', zeroY);
+                zeroLine.setAttribute('stroke', '#52525b'); zeroLine.setAttribute('stroke-width', '1');
+                svg.appendChild(zeroLine);
+            }
+
+            // --- вертикальные тики по X (подписи оси) ---
+            const xTickEvery = Math.max(1, Math.ceil(points.length / 6));
+            points.forEach((p, i) => {
+                if (i % xTickEvery !== 0 && i !== points.length - 1) return;
+                const label = document.createElementNS(NS, 'text');
+                label.setAttribute('x', xPos(i)); label.setAttribute('y', H - padB + 13);
+                label.setAttribute('text-anchor', 'middle');
+                label.setAttribute('class', 'chart-axis-label');
+                label.textContent = p.label != null ? p.label : (i + 1);
+                svg.appendChild(label);
+            });
+
+            // --- область под кривой ---
+            const baseY = (minY < 0 && maxY > 0) ? yPos(0) : yPos(minY);
+            let areaPath = `M ${xPos(0)} ${baseY} `;
             points.forEach((p, i) => areaPath += `L ${xPos(i)} ${yPos(p.value)} `);
-            areaPath += `L ${xPos(points.length-1)} ${zeroY} Z`;
+            areaPath += `L ${xPos(points.length-1)} ${baseY} Z`;
             const area = document.createElementNS(NS, 'path');
             area.setAttribute('d', areaPath);
             area.setAttribute('fill', opts.color || '#10b981');
             area.setAttribute('opacity', '0.12');
             svg.appendChild(area);
 
-            // line
+            // --- сама линия ---
             let linePath = '';
             points.forEach((p, i) => { linePath += (i === 0 ? 'M' : 'L') + ` ${xPos(i)} ${yPos(p.value)} `; });
             const line = document.createElementNS(NS, 'path');
@@ -810,51 +975,72 @@
             line.setAttribute('stroke-linecap', 'round');
             svg.appendChild(line);
 
-            // points
+            // --- точки с тултипом при наведении ---
             points.forEach((p, i) => {
                 const c = document.createElementNS(NS, 'circle');
                 c.setAttribute('cx', xPos(i)); c.setAttribute('cy', yPos(p.value));
-                c.setAttribute('r', points.length > 30 ? 1.5 : 2.5);
+                c.setAttribute('r', points.length > 25 ? 1.8 : 3);
                 c.setAttribute('fill', opts.color || '#10b981');
+                c.setAttribute('stroke', '#09090b');
+                c.setAttribute('stroke-width', '1');
+                c.style.cursor = 'pointer';
+                const titleEl = document.createElementNS(NS, 'title');
+                titleEl.textContent = `${p.label != null ? p.label : i+1}: ${(p.value/100 > 0 ? '+' : '') + (p.value/100).toFixed(2)}`;
+                c.appendChild(titleEl);
                 svg.appendChild(c);
             });
 
-            // y-axis labels (min/max)
-            [maxY, minY].forEach(v => {
-                const t = document.createElementNS(NS, 'text');
-                t.setAttribute('x', 2); t.setAttribute('y', yPos(v) + 3);
-                t.setAttribute('font-size', '8'); t.setAttribute('fill', '#71717a');
-                t.setAttribute('font-family', 'ui-monospace, monospace');
-                t.textContent = (v/100).toFixed(1);
-                svg.appendChild(t);
-            });
-
-            // x label
+            // --- подпись оси X ---
             if (opts.xLabel) {
                 const t = document.createElementNS(NS, 'text');
                 t.setAttribute('x', W/2); t.setAttribute('y', H - 4);
                 t.setAttribute('text-anchor', 'middle');
-                t.setAttribute('font-size', '8'); t.setAttribute('fill', '#52525b');
+                t.setAttribute('font-size', '9'); t.setAttribute('fill', '#71717a');
                 t.textContent = opts.xLabel;
+                svg.appendChild(t);
+            }
+            // --- подпись оси Y (сбоку, повёрнута) ---
+            if (opts.yLabel) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', 9); t.setAttribute('y', H/2);
+                t.setAttribute('text-anchor', 'middle');
+                t.setAttribute('font-size', '8'); t.setAttribute('fill', '#52525b');
+                t.setAttribute('transform', `rotate(-90 9 ${H/2})`);
+                t.textContent = opts.yLabel;
                 svg.appendChild(t);
             }
         }
 
         function renderDepthChart() {
-            drawLineChart('depthChart', currentDepthHistory.map(d => ({ value: d.score })), { color: '#3b82f6', xLabel: 'глубина →' });
+            const pts = currentDepthHistory.map(d => ({ value: d.score, label: d.depth }));
+            drawLineChart('depthChart', pts, { color: '#3b82f6', xLabel: 'глубина поиска', yLabel: 'пешки' });
         }
         function renderEvolutionChart() {
-            drawLineChart('evolutionChart', evolutionHistory.map(e => ({ value: e.score })), { color: '#a855f7', xLabel: 'ход →' });
+            const pts = evolutionHistory.map(e => ({ value: e.score, label: e.ply }));
+            drawLineChart('evolutionChart', pts, { color: '#a855f7', xLabel: 'номер полухода', yLabel: 'пешки' });
         }
 
-        // ---------------- Heatmap ----------------
+        // ---------------- Heatmap (с координатами доски и легендой) ----------------
         function renderHeatmap() {
             const svg = document.getElementById('heatmapCanvas');
             svg.innerHTML = '';
-            const W = 320, H = 140;
-            const cell = Math.min((W - 20) / 8, (H - 20) / 8);
-            const startX = (W - cell*8) / 2, startY = (H - cell*8) / 2;
+            const W = 320, H = 160;
+            const padL = 16, padT = 6, padR = 46, padB = 16;
+            const boardSize = Math.min(W - padL - padR, H - padT - padB);
+            const cell = boardSize / 8;
+            const startX = padL, startY = padT;
             const maxVal = Math.max(1, ...Object.values(squareActivity));
+            const totalMoves = Object.values(squareActivity).reduce((a,b) => a+b, 0);
+
+            if (totalMoves === 0) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', W/2); t.setAttribute('y', H/2);
+                t.setAttribute('text-anchor', 'middle');
+                t.setAttribute('font-size', '10'); t.setAttribute('fill', '#52525b');
+                t.textContent = 'Нет ходов пока';
+                svg.appendChild(t);
+                return;
+            }
 
             for (let r = 0; r < 8; r++) {
                 for (let f = 0; f < 8; f++) {
@@ -866,11 +1052,63 @@
                     rect.setAttribute('y', startY + r*cell);
                     rect.setAttribute('width', cell - 1);
                     rect.setAttribute('height', cell - 1);
-                    const alpha = 0.08 + intensity * 0.82;
+                    rect.setAttribute('rx', 1.5);
+                    const alpha = val === 0 ? 0.06 : 0.15 + intensity * 0.75;
                     rect.setAttribute('fill', `rgba(249, 115, 22, ${alpha.toFixed(2)})`);
+                    if (val > 0) {
+                        const titleEl = document.createElementNS(NS, 'title');
+                        titleEl.textContent = `${sq}: ${val} раз(а)`;
+                        rect.appendChild(titleEl);
+                    }
                     svg.appendChild(rect);
                 }
             }
+
+            // подписи файлов (a-h) снизу
+            for (let f = 0; f < 8; f++) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', startX + f*cell + cell/2);
+                t.setAttribute('y', startY + boardSize + 11);
+                t.setAttribute('text-anchor', 'middle');
+                t.setAttribute('class', 'chart-axis-label');
+                t.textContent = 'abcdefgh'[f];
+                svg.appendChild(t);
+            }
+            // подписи горизонталей (8-1) слева
+            for (let r = 0; r < 8; r++) {
+                const t = document.createElementNS(NS, 'text');
+                t.setAttribute('x', startX - 5);
+                t.setAttribute('y', startY + r*cell + cell/2 + 3);
+                t.setAttribute('text-anchor', 'end');
+                t.setAttribute('class', 'chart-axis-label');
+                t.textContent = 8 - r;
+                svg.appendChild(t);
+            }
+
+            // цветовая легенда справа
+            const legendX = startX + boardSize + 14;
+            const legendH = boardSize;
+            const steps = 5;
+            for (let s = 0; s < steps; s++) {
+                const alpha = 0.1 + (s / (steps-1)) * 0.8;
+                const rect = document.createElementNS(NS, 'rect');
+                rect.setAttribute('x', legendX);
+                rect.setAttribute('y', startY + legendH - (s+1) * (legendH/steps));
+                rect.setAttribute('width', 12);
+                rect.setAttribute('height', legendH/steps - 1);
+                rect.setAttribute('fill', `rgba(249, 115, 22, ${alpha.toFixed(2)})`);
+                svg.appendChild(rect);
+            }
+            const legendLabelTop = document.createElementNS(NS, 'text');
+            legendLabelTop.setAttribute('x', legendX + 16); legendLabelTop.setAttribute('y', startY + 6);
+            legendLabelTop.setAttribute('class', 'chart-axis-label');
+            legendLabelTop.textContent = maxVal;
+            svg.appendChild(legendLabelTop);
+            const legendLabelBottom = document.createElementNS(NS, 'text');
+            legendLabelBottom.setAttribute('x', legendX + 16); legendLabelBottom.setAttribute('y', startY + legendH);
+            legendLabelBottom.setAttribute('class', 'chart-axis-label');
+            legendLabelBottom.textContent = '0';
+            svg.appendChild(legendLabelBottom);
         }
 
         // ---------------- Worker wiring ----------------
