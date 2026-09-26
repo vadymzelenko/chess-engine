@@ -383,7 +383,18 @@
                 }
 
                 engine.move(moves[i]);
-                const score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
+
+                let score;
+                if (i === 0) {
+                    score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
+                } else {
+                    // PVS: узкое окно для быстрой проверки, re-search полным окном только если ход оказался лучше alpha
+                    score = -alphaBeta(depth - 1, -alpha - 1, -alpha, ply + 1, childNode);
+                    if (score > alpha && score < beta && !timeUp) {
+                        score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
+                    }
+                }
+
                 engine.undo();
 
                 if (childNode) { childNode.score = score; childNode.status = 'explored'; }
@@ -485,7 +496,22 @@
                     treeRoot.children.push(childNode);
 
                     engine.move(moves[i]);
-                    const score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
+
+                    let score;
+                    if (i === 0) {
+                        // Первый ход (обычно из TT / лучший с прошлой итерации) — полное окно,
+                        // чтобы получить точную оценку и задать реальную планку alpha.
+                        score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
+                    } else {
+                        // PVS: остальные ходы сначала узким окном (быстрая проверка "хуже ли он текущего лучшего").
+                        score = -alphaBeta(depth - 1, -alpha - 1, -alpha, 1, childNode);
+                        if (score > alpha && !timeUp) {
+                            // Оказался не хуже — переисследуем полным окном, чтобы узнать НАСТОЯЩУЮ оценку,
+                            // а не просто нижнюю границу.
+                            score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
+                        }
+                    }
+
                     engine.undo();
 
                     childNode.score = score;
@@ -493,7 +519,11 @@
 
                     if (timeUp) break;
 
-                    rootLines.push({ san: moves[i].san, from: moves[i].from, to: moves[i].to, score });
+                    // rootLines может уже содержать этот ход из предыдущего re-search — заменяем, а не дублируем
+                    const existingIdx = rootLines.findIndex(l => l.san === moves[i].san);
+                    const lineEntry = { san: moves[i].san, from: moves[i].from, to: moves[i].to, score };
+                    if (existingIdx >= 0) rootLines[existingIdx] = lineEntry;
+                    else rootLines.push(lineEntry);
                     rootLines.sort((a,b) => b.score - a.score);
 
                     if (score > bestScoreThisDepth) { bestScoreThisDepth = score; bestMoveThisDepth = moves[i]; }
