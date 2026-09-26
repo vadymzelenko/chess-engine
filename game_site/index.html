@@ -14,34 +14,93 @@
     
     <style>
         :root { color-scheme: dark; }
-        body { background-color: #09090b; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-        #board { border: 1px solid #27272a; border-radius: 4px; overflow: hidden; filter: grayscale(100%) contrast(1.1); }
+        body { 
+            background-color: #000000; 
+            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; 
+        }
+        
+        /* Стилизация доски */
+        #board { 
+            border: 1px solid #27272a; 
+            border-radius: 8px; 
+            overflow: hidden; 
+            filter: grayscale(20%) contrast(1.05); /* Делаем доску более премиальной */
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 30px 60px -10px rgba(0,0,0,0.5);
+        }
+
+        /* Кастомный скроллбар для эстетики */
         ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+        /* Подсветка возможных ходов в стиле Lichess */
+        .highlight-move, .highlight-capture { position: relative; }
+        .highlight-move::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 32%; height: 32%;
+            background: rgba(34, 197, 94, 0.4);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 2;
+        }
+        .highlight-capture::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 85%; height: 85%;
+            border: 4px solid rgba(34, 197, 94, 0.4);
+            background: transparent;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 2;
+        }
     </style>
 </head>
-<body class="text-zinc-100 min-h-screen flex flex-col items-center justify-center p-4">
+<body class="text-zinc-200 h-screen overflow-hidden flex flex-col items-center justify-center p-4 md:p-8">
 
-    <div class="w-full max-w-3xl grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-8 items-start">
-        <div class="flex flex-col gap-4">
-            <div class="flex justify-between items-end">
-                <h1 class="text-3xl font-bold tracking-tighter">CUSTOM ENGINE</h1>
-                <div id="status" class="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full text-xs font-mono text-amber-400">
-                    Загрузка weights.json...
+    <div class="w-full max-w-5xl h-full max-h-[700px] grid grid-cols-1 md:grid-cols-[2fr_1.2fr] gap-6 md:gap-10 items-start">
+        
+        <!-- Левая часть: Доска -->
+        <div class="flex flex-col gap-5 h-full">
+            <div class="flex justify-between items-end px-1">
+                <h1 class="text-2xl font-semibold tracking-tight text-white">Custom Engine</h1>
+                <div id="status" class="px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-md text-xs font-mono text-zinc-400 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                    Запуск...
                 </div>
             </div>
-            <div id="board" class="w-full aspect-square shadow-2xl"></div>
+            <!-- aspect-square гарантирует правильные пропорции, w-full/max-w ограничивают рост -->
+            <div class="w-full max-w-[600px] mx-auto aspect-square">
+                <div id="board" class="w-full h-full"></div>
+            </div>
         </div>
 
-        <div class="flex flex-col gap-4 bg-zinc-900/50 p-6 rounded-xl border border-zinc-800 h-full">
-            <button onclick="resetGame()" class="w-full py-2.5 bg-zinc-100 text-zinc-900 font-semibold rounded-md hover:bg-white transition-colors">
-                Новая игра
-            </button>
-            <div id="history" class="flex-1 bg-zinc-950 rounded border border-zinc-800 p-3 overflow-y-auto font-mono text-sm text-zinc-300 flex flex-col gap-1 min-h-[200px]"></div>
+        <!-- Правая часть: Управление и История -->
+        <div class="flex flex-col gap-4 bg-zinc-900/40 p-5 rounded-xl border border-zinc-800/80 h-full max-h-[600px] shadow-xl backdrop-blur-sm">
+            <div class="flex gap-2 w-full">
+                <button onclick="resetGame()" class="flex-1 py-2 bg-white text-zinc-950 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors shadow-sm">
+                    Новая игра
+                </button>
+                <button onclick="undoMove()" class="flex-1 py-2 bg-zinc-800 text-zinc-100 text-sm font-medium rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700">
+                    Ход назад
+                </button>
+            </div>
+            
+            <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-2">История ходов</div>
+            
+            <!-- min-h-0 и flex-1 решают проблему с растягиванием страницы -->
+            <div id="history" class="flex-1 bg-zinc-950/50 rounded-lg border border-zinc-800/50 p-3 overflow-y-auto font-mono text-sm text-zinc-400 grid grid-cols-2 gap-x-4 gap-y-1 content-start min-h-0">
+                <!-- Ходы будут рендериться сюда -->
+            </div>
         </div>
     </div>
 
-    <!-- ВСТРОЕННЫЙ ВОРКЕР (Загрузка весов и поиск ходов) -->
+    <!-- ВОРКЕР ИИ -->
     <script id="worker-code" type="text/worker">
         importScripts('https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js');
         
@@ -53,12 +112,13 @@
 
             if (type === 'INIT') {
                 try {
-                    // Скачиваем твой weights.json, лежащий рядом с index.html
                     const res = await fetch('/weights.json');
+                    if (!res.ok) throw new Error('File not found');
                     customWeights = await res.json();
-                    self.postMessage({ type: 'READY' });
+                    self.postMessage({ type: 'READY', msg: 'Готов (свои веса)' });
                 } catch (error) {
-                    self.postMessage({ type: 'ERROR', msg: 'Не удалось загрузить weights.json' });
+                    // Обработка ошибки загрузки: тихо продолжаем с базовыми весами
+                    self.postMessage({ type: 'READY', msg: 'Готов (базовые веса)' });
                 }
             }
 
@@ -71,6 +131,7 @@
         function searchBestMove(fen, depth) {
             engine.load(fen);
             const moves = engine.moves({ verbose: true });
+            if (moves.length === 0) return null;
             
             let bestMove = null;
             let bestValue = -Infinity;
@@ -112,21 +173,16 @@
         function evaluateBoard() {
             const board = engine.board();
             let score = 0;
-            
-            // Базовые значения, если в weights.json что-то не так
             const defaults = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
             
             for (let i = 0; i < 8; i++) {
                 for (let j = 0; j < 8; j++) {
                     const piece = board[i][j];
                     if (piece) {
-                        // ТУТ ИСПОЛЬЗУЮТСЯ ТВОИ ВЕСА
-                        // Если структура JSON другая - просто поменяй ключи ниже
                         let val = defaults[piece.type];
                         if (customWeights && customWeights[piece.type]) {
                             val = customWeights[piece.type]; 
                         }
-                        
                         score += piece.color === 'w' ? val : -val;
                     }
                 }
@@ -135,7 +191,7 @@
         }
     </script>
 
-    <!-- ОСНОВНАЯ ЛОГИКА ИНТЕРФЕЙСА -->
+    <!-- ЛОГИКА ИНТЕРФЕЙСА -->
     <script>
         const game = new Chess();
         const statusEl = document.getElementById('status');
@@ -149,9 +205,7 @@
             const { type, msg, move } = e.data;
 
             if (type === 'READY') {
-                statusEl.innerHTML = '<span class="text-green-500">Готов (веса загружены)</span>';
-            } else if (type === 'ERROR') {
-                statusEl.innerHTML = `<span class="text-red-500">${msg}</span>`;
+                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span>${msg}`;
             } else if (type === 'BEST_MOVE') {
                 if (move) {
                     game.move({ from: move.substring(0, 2), to: move.substring(2, 4), promotion: move.charAt(4) || 'q' });
@@ -164,40 +218,97 @@
         engineWorker.postMessage({ type: 'INIT' });
 
         function updateUI() {
-            historyEl.innerHTML = game.history().map((m, i) => `<div>${Math.floor(i/2)+1}. ${m}</div>`).join('');
+            const history = game.history();
+            let html = '';
+            // Форматируем историю в две колонки: 1. e4 e5
+            for (let i = 0; i < history.length; i += 2) {
+                html += `<div class="text-zinc-500 flex justify-between"><span class="text-zinc-600">${Math.floor(i/2) + 1}.</span> <span class="text-zinc-200">${history[i]}</span></div>`;
+                if (history[i+1]) {
+                    html += `<div class="text-right text-zinc-400">${history[i+1]}</div>`;
+                } else {
+                    html += `<div></div>`;
+                }
+            }
+            historyEl.innerHTML = html;
             historyEl.scrollTop = historyEl.scrollHeight;
 
             if (game.game_over()) {
-                statusEl.innerHTML = game.in_checkmate() ? '<span class="text-red-500">Мат!</span>' : '<span class="text-zinc-500">Ничья</span>';
+                statusEl.innerHTML = game.in_checkmate() ? 
+                    '<span class="w-2 h-2 rounded-full bg-red-500"></span>Мат!' : 
+                    '<span class="w-2 h-2 rounded-full bg-zinc-500"></span>Ничья';
             } else {
-                statusEl.innerHTML = '<span class="text-green-500">Ваш ход</span>';
+                statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500"></span>Ваш ход';
             }
         }
 
+        function clearHighlights() {
+            $('#board .square-55d63').removeClass('highlight-move highlight-capture');
+        }
+
+        function onDragStart(source, piece) {
+            if (game.game_over() || piece.search(/^b/) !== -1) return false;
+
+            // Получаем доступные ходы и рисуем точки (как на Lichess)
+            const moves = game.moves({ square: source, verbose: true });
+            if (moves.length === 0) return;
+
+            moves.forEach(m => {
+                const sqEl = $('#board .square-' + m.to);
+                if (m.flags.includes('c') || m.flags.includes('e')) {
+                    sqEl.addClass('highlight-capture'); // Круг захвата
+                } else {
+                    sqEl.addClass('highlight-move'); // Точка обычного хода
+                }
+            });
+        }
+
         function onDrop(source, target) {
-            if (game.move({ from: source, to: target, promotion: 'q' }) === null) return 'snapback';
+            clearHighlights();
             
-            board.position(game.fen());
+            const move = game.move({ from: source, to: target, promotion: 'q' });
+            
+            // Если ход неверный - фигура вернется обратно
+            if (move === null) return 'snapback';
+            
+            // ВАЖНО: мы не вызываем board.position() здесь!
+            // Это избавляет от бага с двойной анимацией (рывка фигуры).
             updateUI();
 
             if (!game.game_over()) {
-                statusEl.innerHTML = '<span class="text-amber-500 animate-pulse">Движок думает...</span>';
+                statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>Думает...';
                 engineWorker.postMessage({ type: 'SEARCH', fen: game.fen(), depth: 3 });
             }
+        }
+
+        // Синхронизация доски происходит ТОЛЬКО после того как анимация фигуры завершена
+        function onSnapEnd() {
+            board.position(game.fen());
         }
 
         let board = Chessboard('board', {
             draggable: true,
             position: 'start',
-            onDragStart: (s, p) => !game.game_over() && !p.startsWith('b'),
+            moveSpeed: 150,
+            snapbackSpeed: 200,
+            onDragStart: onDragStart,
             onDrop: onDrop,
-            onSnapEnd: () => board.position(game.fen()),
+            onSnapEnd: onSnapEnd,
             pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
         });
 
         window.resetGame = function() {
             game.reset();
             board.start();
+            clearHighlights();
+            updateUI();
+        };
+
+        window.undoMove = function() {
+            // Отменяем 2 хода (ИИ и наш)
+            game.undo(); 
+            game.undo();
+            board.position(game.fen());
+            clearHighlights();
             updateUI();
         };
     </script>
