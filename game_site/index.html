@@ -161,6 +161,21 @@
 
         .chart-axis-label { font-size: 8.5px; fill: #71717a; font-family: ui-monospace, monospace; }
         .chart-grid-line { stroke: #27272a; stroke-width: 1; }
+
+        /* ---- Авто-оптимизация раскладки при скрытии панелей ---- */
+        @media (min-width: 1024px) {
+            #topRow.layout-both { grid-template-columns: auto 1fr 280px; }
+            #topRow.layout-search-only { grid-template-columns: auto 1fr; }
+            #topRow.layout-metrics-only { grid-template-columns: auto 280px; }
+            #topRow.layout-board-only { grid-template-columns: auto; }
+        }
+        @media (min-width: 768px) {
+            #dashboardRow.cols-1 { grid-template-columns: repeat(1, minmax(0,1fr)); }
+            #dashboardRow.cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            #dashboardRow.cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+        }
+
+        .square-55d63 { touch-action: manipulation; }
     </style>
 </head>
 <body class="text-zinc-200 min-h-screen overflow-y-auto flex flex-col items-center p-4 md:p-6 gap-4">
@@ -171,7 +186,7 @@
         <div id="restoreBar"></div>
 
         <!-- ВЕРХНИЙ РЯД: доска + топ-линии + метрики -->
-        <div class="grid grid-cols-1 lg:grid-cols-[auto_1fr_280px] gap-4 items-start">
+        <div id="topRow" class="grid grid-cols-1 lg:grid-cols-[auto_1fr_280px] gap-4 items-start layout-both">
 
             <!-- Доска (всегда видна, без крестика) -->
             <div class="flex flex-col gap-3 w-full max-w-[420px] mx-auto lg:mx-0">
@@ -185,6 +200,7 @@
                 <div class="w-full aspect-square">
                     <div id="board" class="w-full h-full"></div>
                 </div>
+                <div class="text-[11px] text-zinc-600 text-center -mt-1">Нажмите на фигуру, затем на клетку — ходить можно одним пальцем</div>
                 <div class="flex gap-2 w-full">
                     <button onclick="resetGame()" class="flex-1 py-2 bg-white text-zinc-950 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors shadow-sm">
                         Новая игра
@@ -249,7 +265,7 @@
         </div>
 
         <!-- НИЖНИЙ РЯД: дашборды -->
-        <div id="dashboardRow" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div id="dashboardRow" class="grid grid-cols-1 md:grid-cols-3 gap-4 cols-3">
 
             <div id="widget-depthchart" class="widget-slot panel p-4 flex flex-col gap-2">
                 <div class="panel-header">
@@ -296,7 +312,7 @@
 
         const TIME_BUDGET_MS = 3500;
         const MAX_DEPTH = 64;
-        const PROGRESS_INTERVAL_MS = 220; // несколько раз в секунду
+        const PROGRESS_INTERVAL_MS = 220;
 
         const DEFAULT_MATERIAL = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
 
@@ -343,7 +359,6 @@
         let timeUp = false;
         let lastProgressPost = 0;
 
-        // Снимок дерева на первых 2 уровнях от корня для визуализации
         let treeRoot = null;
 
         function checkTime() {
@@ -418,7 +433,6 @@
             return alpha;
         }
 
-        // treeNode: собираем только для верхних 2 уровней (root -> depth1 -> depth2), с ограничением по числу детей
         function alphaBeta(depth, alpha, beta, ply, treeNode) {
             nodeCount++;
             checkTime();
@@ -463,7 +477,6 @@
                 if (i === 0) {
                     score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
                 } else {
-                    // PVS: узкое окно для быстрой проверки, re-search полным окном только если ход оказался лучше alpha
                     score = -alphaBeta(depth - 1, -alpha - 1, -alpha, ply + 1, childNode);
                     if (score > alpha && score < beta && !timeUp) {
                         score = -alphaBeta(depth - 1, -beta, -alpha, ply + 1, childNode);
@@ -481,7 +494,6 @@
                 if (alpha >= beta) {
                     pruneCount++;
                     if (childNode) childNode.status = 'pruned';
-                    // помечаем оставшиеся ещё не посчитанные как отсечённые
                     if (collectChildren) {
                         for (let k = i + 1; k < Math.min(moves.length, maxChildrenToTrack); k++) {
                             treeNode.children.push({ move: moves[k].san, from: moves[k].from, to: moves[k].to, children: [], status: 'pruned-skip', score: null });
@@ -524,7 +536,6 @@
         }
 
         function cloneTree(node) {
-            // ограничиваем глубину клонирования визуализации, чтобы не тормозить постинг
             return {
                 move: node.move || 'root',
                 score: node.score,
@@ -574,15 +585,10 @@
 
                     let score;
                     if (i === 0) {
-                        // Первый ход (обычно из TT / лучший с прошлой итерации) — полное окно,
-                        // чтобы получить точную оценку и задать реальную планку alpha.
                         score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
                     } else {
-                        // PVS: остальные ходы сначала узким окном (быстрая проверка "хуже ли он текущего лучшего").
                         score = -alphaBeta(depth - 1, -alpha - 1, -alpha, 1, childNode);
                         if (score > alpha && !timeUp) {
-                            // Оказался не хуже — переисследуем полным окном, чтобы узнать НАСТОЯЩУЮ оценку,
-                            // а не просто нижнюю границу.
                             score = -alphaBeta(depth - 1, -beta, -alpha, 1, childNode);
                         }
                     }
@@ -594,7 +600,6 @@
 
                     if (timeUp) break;
 
-                    // rootLines может уже содержать этот ход из предыдущего re-search — заменяем, а не дублируем
                     const existingIdx = rootLines.findIndex(l => l.san === moves[i].san);
                     const lineEntry = { san: moves[i].san, from: moves[i].from, to: moves[i].to, score };
                     if (existingIdx >= 0) rootLines[existingIdx] = lineEntry;
@@ -669,7 +674,6 @@
         const pvLineEl = document.getElementById('pvLine');
         let selectedSquare = null;
 
-        // ---- Метрики DOM ----
         const mDepth = document.getElementById('mDepth');
         const mScore = document.getElementById('mScore');
         const mNodes = document.getElementById('mNodes');
@@ -677,9 +681,8 @@
         const mTime = document.getElementById('mTime');
         const mPrune = document.getElementById('mPrune');
 
-        // ---- Состояние для дашбордов ----
-        let evolutionHistory = []; // { ply, score } по партии, score с точки зрения белых
-        let squareActivity = {};   // 'e4' -> count
+        let evolutionHistory = [];
+        let squareActivity = {};
         for (let f = 0; f < 8; f++) for (let r = 0; r < 8; r++) {
             squareActivity['abcdefgh'[f] + (r+1)] = 0;
         }
@@ -706,7 +709,7 @@
 
         // ---------------- Закрытие / восстановление виджетов ----------------
         const restoreBar = document.getElementById('restoreBar');
-        const closedWidgets = new Map(); // id -> label
+        const closedWidgets = new Map();
 
         window.closeWidget = function(id, label) {
             const el = document.getElementById(id);
@@ -714,6 +717,7 @@
             el.classList.add('hidden-widget');
             closedWidgets.set(id, label);
             renderRestoreBar();
+            optimizeLayout();
         };
 
         window.restoreWidget = function(id) {
@@ -722,7 +726,7 @@
             el.classList.remove('hidden-widget');
             closedWidgets.delete(id);
             renderRestoreBar();
-            // после восстановления перерисовать графики/дерево, т.к. размеры SVG могли не считаться пока панель была скрыта
+            optimizeLayout();
             if (id === 'widget-depthchart') renderDepthChart();
             if (id === 'widget-evolchart') renderEvolutionChart();
             if (id === 'widget-heatmap') renderHeatmap();
@@ -739,6 +743,36 @@
                 </button>`;
             }
             restoreBar.innerHTML = html;
+        }
+
+        // ---------------- Авто-оптимизация раскладки при скрытии/показе панелей ----------------
+        function optimizeLayout() {
+            const topRow = document.getElementById('topRow');
+            const searchVisible = !closedWidgets.has('widget-search');
+            const metricsVisible = !closedWidgets.has('widget-metrics');
+            topRow.classList.remove('layout-both', 'layout-search-only', 'layout-metrics-only', 'layout-board-only');
+            if (searchVisible && metricsVisible) topRow.classList.add('layout-both');
+            else if (searchVisible) topRow.classList.add('layout-search-only');
+            else if (metricsVisible) topRow.classList.add('layout-metrics-only');
+            else topRow.classList.add('layout-board-only');
+
+            const dashIds = ['widget-depthchart', 'widget-evolchart', 'widget-heatmap'];
+            const visibleCount = dashIds.filter(id => !closedWidgets.has(id)).length;
+            const dashboardRow = document.getElementById('dashboardRow');
+            dashboardRow.classList.remove('cols-1', 'cols-2', 'cols-3');
+            if (visibleCount === 0) {
+                dashboardRow.style.display = 'none';
+            } else {
+                dashboardRow.style.display = '';
+                dashboardRow.classList.add('cols-' + visibleCount);
+            }
+
+            setTimeout(() => {
+                if (searchVisible && window.__lastTree) renderTree(window.__lastTree);
+                if (!closedWidgets.has('widget-depthchart')) renderDepthChart();
+                if (!closedWidgets.has('widget-evolchart')) renderEvolutionChart();
+                if (!closedWidgets.has('widget-heatmap')) renderHeatmap();
+            }, 60);
         }
 
         // ---------------- Дерево поиска (SVG) ----------------
@@ -764,29 +798,18 @@
             const height = Math.max(treeSvg.clientHeight || 420, 420);
             treeSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
 
-            const levels = [[tree]];
-            if (tree.children && tree.children.length) levels.push(tree.children);
-            let level2 = [];
-            for (const c of (tree.children || [])) {
-                for (const g of (c.children || [])) level2.push({ node: g, parent: c });
-            }
-            if (level2.length) levels.push(level2.map(x => x.node));
-
+            const l1 = tree.children || [];
             const levelY = [40, height * 0.48, height - 30];
-            const positions = new Map(); // node -> {x,y}
+            const positions = new Map();
 
-            // root
             positions.set(tree, { x: width/2, y: levelY[0] });
 
-            // level 1
-            const l1 = tree.children || [];
             const l1Width = width - 60;
             l1.forEach((c, i) => {
                 const x = l1.length === 1 ? width/2 : 30 + (l1Width * i / (l1.length - 1));
                 positions.set(c, { x, y: levelY[1] });
             });
 
-            // level 2 grouped under each parent
             l1.forEach((c) => {
                 const kids = c.children || [];
                 const parentPos = positions.get(c);
@@ -844,7 +867,6 @@
                 treeSvg.appendChild(g);
             }
 
-            // edges first (behind nodes)
             l1.forEach(c => drawEdge(positions.get(tree), positions.get(c), c.status));
             l1.forEach(c => (c.children || []).forEach(g => drawEdge(positions.get(c), positions.get(g), g.status)));
 
@@ -870,7 +892,7 @@
             }).join('');
         }
 
-        // ---------------- Графики (SVG line charts, с нормальными осями) ----------------
+        // ---------------- Графики (SVG line charts) ----------------
         function niceStep(range, targetTicks) {
             if (range <= 0) return 1;
             const rough = range / targetTicks;
@@ -902,7 +924,6 @@
             const ys = points.map(p => p.value);
             let minY = Math.min(...ys, 0), maxY = Math.max(...ys, 0);
             if (minY === maxY) { minY -= 50; maxY += 50; }
-            // добавляем запас сверху/снизу, чтобы линия не упиралась в край
             const pad = (maxY - minY) * 0.12;
             minY -= pad; maxY += pad;
             const rangeY = maxY - minY;
@@ -911,7 +932,6 @@
             function xPos(i) { return padL + (points.length === 1 ? plotW/2 : plotW * i / (points.length - 1)); }
             function yPos(v) { return padT + plotH - ((v - minY) / rangeY) * plotH; }
 
-            // --- горизонтальная сетка с "красивыми" шагами по Y (в пешках) ---
             const stepCp = niceStep(rangeY, 4);
             const firstTick = Math.ceil(minY / stepCp) * stepCp;
             for (let v = firstTick; v <= maxY; v += stepCp) {
@@ -930,7 +950,6 @@
                 svg.appendChild(label);
             }
 
-            // --- нулевая линия (акцентная, если 0 в диапазоне) ---
             if (minY < 0 && maxY > 0) {
                 const zeroY = yPos(0);
                 const zeroLine = document.createElementNS(NS, 'line');
@@ -940,7 +959,6 @@
                 svg.appendChild(zeroLine);
             }
 
-            // --- вертикальные тики по X (подписи оси) ---
             const xTickEvery = Math.max(1, Math.ceil(points.length / 6));
             points.forEach((p, i) => {
                 if (i % xTickEvery !== 0 && i !== points.length - 1) return;
@@ -952,7 +970,6 @@
                 svg.appendChild(label);
             });
 
-            // --- область под кривой ---
             const baseY = (minY < 0 && maxY > 0) ? yPos(0) : yPos(minY);
             let areaPath = `M ${xPos(0)} ${baseY} `;
             points.forEach((p, i) => areaPath += `L ${xPos(i)} ${yPos(p.value)} `);
@@ -963,7 +980,6 @@
             area.setAttribute('opacity', '0.12');
             svg.appendChild(area);
 
-            // --- сама линия ---
             let linePath = '';
             points.forEach((p, i) => { linePath += (i === 0 ? 'M' : 'L') + ` ${xPos(i)} ${yPos(p.value)} `; });
             const line = document.createElementNS(NS, 'path');
@@ -975,7 +991,6 @@
             line.setAttribute('stroke-linecap', 'round');
             svg.appendChild(line);
 
-            // --- точки с тултипом при наведении ---
             points.forEach((p, i) => {
                 const c = document.createElementNS(NS, 'circle');
                 c.setAttribute('cx', xPos(i)); c.setAttribute('cy', yPos(p.value));
@@ -990,7 +1005,6 @@
                 svg.appendChild(c);
             });
 
-            // --- подпись оси X ---
             if (opts.xLabel) {
                 const t = document.createElementNS(NS, 'text');
                 t.setAttribute('x', W/2); t.setAttribute('y', H - 4);
@@ -999,7 +1013,6 @@
                 t.textContent = opts.xLabel;
                 svg.appendChild(t);
             }
-            // --- подпись оси Y (сбоку, повёрнута) ---
             if (opts.yLabel) {
                 const t = document.createElementNS(NS, 'text');
                 t.setAttribute('x', 9); t.setAttribute('y', H/2);
@@ -1020,7 +1033,7 @@
             drawLineChart('evolutionChart', pts, { color: '#a855f7', xLabel: 'номер полухода', yLabel: 'пешки' });
         }
 
-        // ---------------- Heatmap (с координатами доски и легендой) ----------------
+        // ---------------- Heatmap ----------------
         function renderHeatmap() {
             const svg = document.getElementById('heatmapCanvas');
             svg.innerHTML = '';
@@ -1064,7 +1077,6 @@
                 }
             }
 
-            // подписи файлов (a-h) снизу
             for (let f = 0; f < 8; f++) {
                 const t = document.createElementNS(NS, 'text');
                 t.setAttribute('x', startX + f*cell + cell/2);
@@ -1074,7 +1086,6 @@
                 t.textContent = 'abcdefgh'[f];
                 svg.appendChild(t);
             }
-            // подписи горизонталей (8-1) слева
             for (let r = 0; r < 8; r++) {
                 const t = document.createElementNS(NS, 'text');
                 t.setAttribute('x', startX - 5);
@@ -1085,7 +1096,6 @@
                 svg.appendChild(t);
             }
 
-            // цветовая легенда справа
             const legendX = startX + boardSize + 14;
             const legendH = boardSize;
             const steps = 5;
@@ -1135,7 +1145,7 @@
                     renderTopLines(data.rootLines);
                     pvLineEl.textContent = data.rootLines[0].san + (data.rootLines[0].score != null ? '  (' + fmtScore(data.rootLines[0].score) + ')' : '');
                 }
-                if (data.tree) renderTree(data.tree);
+                if (data.tree) { window.__lastTree = data.tree; renderTree(data.tree); }
             }
 
             else if (data.type === 'BEST_MOVE') {
@@ -1162,7 +1172,6 @@
         engineWorker.postMessage({ type: 'INIT' });
 
         function recordEvolution() {
-            // оцениваем позицию материально+позиционно с точки зрения белых, для графика партии
             const b = game.board();
             const DEFAULT_MATERIAL = { p:100,n:320,b:330,r:500,q:900,k:0 };
             let score = 0;
@@ -1204,25 +1213,11 @@
             $('#board .square-55d63').removeClass('highlight-move highlight-capture highlight-selected');
         }
 
-        function onDragStart(source, piece) {
-            if (game.game_over() || piece.search(/^b/) !== -1 || game.turn() === 'b') return false;
-            selectedSquare = source;
-            showHighlights(source);
-        }
-        function onDrop(source, target) {
-            clearHighlights();
-            selectedSquare = null;
-            const move = game.move({ from: source, to: target, promotion: 'q' });
-            if (move === null) return 'snapback';
-            squareActivity[source] = (squareActivity[source]||0)+1;
-            squareActivity[target] = (squareActivity[target]||0)+2;
-            updateUI();
-            recordEvolution();
-            renderHeatmap();
-            triggerEngine();
-        }
         function onSnapEnd() { board.position(game.fen()); }
 
+        // Тап-ход: тап по своей фигуре выбирает её, тап по клетке хода — делает ход.
+        // Драг отключён (draggable: false в Chessboard), поэтому это единственный способ ходить —
+        // удобно одним пальцем без необходимости зажимать фигуру.
         $('#board').on('click', '.square-55d63', function() {
             if (game.game_over() || game.turn() === 'b') return;
             const square = $(this).attr('data-square');
@@ -1287,21 +1282,19 @@
         };
 
         let board = Chessboard('board', {
-            draggable: true,
+            draggable: false,
             position: 'start',
             moveSpeed: 150,
             snapbackSpeed: 200,
-            onDragStart: onDragStart,
-            onDrop: onDrop,
             onSnapEnd: onSnapEnd,
             pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
         });
 
-        // init empty charts
         renderEvolutionChart();
         renderDepthChart();
         renderHeatmap();
         renderTopLines([]);
+        optimizeLayout();
         window.addEventListener('resize', () => { if (window.__lastTree) renderTree(window.__lastTree); });
     </script>
 </body>
