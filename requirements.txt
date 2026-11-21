@@ -1,0 +1,11 @@
+chess>=1.11
+numpy>=1.24
+scipy>=1.10
+zstandard>=0.21
+# Neural engine
+torch>=2.0
+# Web interfaces
+fastapi>=0.100
+uvicorn>=0.23
+pydantic>=2.0
+flask>=3.0

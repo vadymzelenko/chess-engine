@@ -641,7 +641,7 @@
 
             if (type === 'INIT') {
                 try {
-                    const res = await fetch('/weights.json');
+                    const res = await fetch('weights.json');
                     if (!res.ok) throw new Error('File not found');
                     customWeights = await res.json();
                     self.postMessage({ type: 'READY', msg: 'Готов (свои веса)' });
