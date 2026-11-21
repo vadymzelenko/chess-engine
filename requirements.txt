@@ -9,3 +9,4 @@ fastapi>=0.100
 uvicorn>=0.23
 pydantic>=2.0
 flask>=3.0
+pytest>=8.0

@@ -61,7 +61,15 @@ python uci_engine.py eval "<FEN>"          # evaluate one position
 python uci_engine.py                       # UCI loop
 ```
 
-The network module `chess_engine.py` (model definition, MCTS and checkpoint loading) and the trained checkpoint are distributed separately and are not part of this repository yet.
+**Training (`train_dual.py`):** supervised learning on Lichess games. The policy target is the move played; the value target is `tanh(cp / 400)` from the `[%eval]` annotations, or the game result when a game has none. Mixed precision on CUDA, AdamW with a one-cycle schedule, validation move accuracy and value error after each epoch, resumable checkpoints.
+
+```bash
+python train_dual.py prepare lichess-2400.pgn.zst --out data/ --max-positions 5000000 --min-elo 2400
+python train_dual.py train data/ --epochs 3 --out chess_dualhead_best.pth
+CHESS_MODEL_PATH=chess_dualhead_best.pth python uci_engine.py
+```
+
+The input and policy encodings are documented at the top of `chess_engine.py`. `load_model` also accepts checkpoints from the earlier training script when every tensor shape matches; a checkpoint with a different layout is reported with the first mismatching tensor.
 
 ## Repository structure
 
@@ -73,7 +81,10 @@ The network module `chess_engine.py` (model definition, MCTS and checkpoint load
 | `prepare_data_pgn.py` | Lichess PGN (`.pgn.zst`) with evaluations to JSON Lines |
 | `data_compile.py`, `data_compile.cpp` | PGN to CSV with phase stratification (Python and an experimental C++ version) |
 | `tuner.py` | Texel tuning with Adam |
+| `chess_engine.py` | Neural engine: input and move encoding, DualHeadResNet, batched MCTS, checkpoint loading |
+| `train_dual.py` | Data preparation and training for the neural engine |
 | `uci_engine.py` | UCI wrapper for the neural engine |
+| `tests/` | Tests for the neural engine (`python -m pytest tests/`) |
 | `claude_engine.py` | Experimental improved alpha-beta engine with a FastAPI interface |
 | `play.py` | UCI loop for the classical engine |
 | `web_app.py` | FastAPI web interface, http://127.0.0.1:8000 |
